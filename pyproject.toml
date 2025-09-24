@@ -1,0 +1,18 @@
+[project]
+name = "nnlib"
+version = "0.1.0"
+description = "A library of neural network architectures for acoustics-informed applications."
+readme = "README.md"
+authors = [
+    { name = "Sturla Njardarson", email = "sturlanjardarson@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "equinox>=0.13.1",
+    "jax>=0.7.2",
+    "jaxlib>=0.7.2",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.21,<0.9.0"]
+build-backend = "uv_build"
