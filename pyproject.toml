@@ -9,10 +9,17 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "equinox>=0.13.1",
+    "ipdb>=0.13.13",
     "jax>=0.7.2",
     "jaxlib>=0.7.2",
+    "pytest>=8.4.2",
+    "test-bench",
+    "torch>=2.8.0",
 ]
 
 [build-system]
 requires = ["uv_build>=0.8.21,<0.9.0"]
 build-backend = "uv_build"
+
+[tool.uv.sources]
+test-bench = { path = "../test_bench" }
