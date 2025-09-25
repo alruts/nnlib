@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Tuple
 
 import equinox as eqx
 import jax
@@ -6,7 +6,17 @@ import jax.numpy as jnp
 
 
 class PeriodEmbs(eqx.Module):
-    """Periodic embeddings with per-axis trainable periods applied to all inputs."""
+    """Periodic embeddings with per-axis trainable periods applied to all inputs.
+
+    Example:
+        >>> import jax.numpy as jnp
+        >>> import equinox as eqx
+        >>> periods = (jnp.array(1.0), jnp.array(2.0))
+        >>> emb = PeriodEmbs(periods=periods)
+        >>> x = jnp.array([0.0])
+        >>> emb(x)
+        Array([1., 0.], dtype=float32)
+    """
 
     periods: Tuple[jnp.ndarray, ...]
 
@@ -21,7 +31,19 @@ class PeriodEmbs(eqx.Module):
 
 
 class FourierEmbedding(eqx.Module):
-    """Fourier embeddings with random Gaussian kernel"""
+    """Fourier embeddings with random Gaussian kernel
+
+    Example:
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> import equinox as eqx
+        >>> key = jax.random.PRNGKey(0)
+        >>> emb = FourierEmbedding(embed_scale=1.0, embed_dim=8, in_dim=3, key=key)
+        >>> x = jnp.array([1.0, 2.0, 3.0])
+        >>> y = emb(x)
+        >>> y.shape
+        (8,)
+    """
 
     embed_scale: float
     embed_dim: int
