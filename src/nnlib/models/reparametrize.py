@@ -199,7 +199,7 @@ def make_modified_siren(
     )
 
     first_layer = reparametrize_linear(
-        mod_mlp.mlp.layers[0],
+        mod_mlp.layers[0],
         weight_dist=lambda k, s: siren_uniform(
             s,
             omega_0=angular_frequency,
@@ -246,11 +246,11 @@ def make_modified_siren(
             bias_dist=lambda _, s: jnp.zeros(s),
             key=next(key_iter),
         )
-        for layer in mod_mlp.mlp.layers[1:]
+        for layer in mod_mlp.layers[1:]
     )
 
     for idx, new_layer in enumerate([first_layer, *other_layers]):
-        mod_mlp = eqx.tree_at(lambda m: m.mlp.layers[idx], mod_mlp, new_layer)
+        mod_mlp = eqx.tree_at(lambda m: m.layers[idx], mod_mlp, new_layer)
 
     # parameterize u and v
     mod_mlp = eqx.tree_at(lambda m: m.u, mod_mlp, u)

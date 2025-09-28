@@ -7,7 +7,7 @@ import jax.random as jrandom
 from jaxtyping import Array, Float, PRNGKeyArray
 
 
-class ModifiedMLP(eqx.Module):
+class ModifiedMLP(eqx.nn.MLP):
     """
     A modified multi-layer perceptron (MLP) from [1] that applies learned linear
     modulators `u` and `v` to the hidden layers before the final output.
@@ -16,6 +16,14 @@ class ModifiedMLP(eqx.Module):
         >>> import jax
         >>> import jax.numpy as jnp
         >>> import equinox as eqx
+        >>> key = jax.random.PRNGKey(0)
+        >>> net_key, x_key = jax.random.split(key)
+        >>> net = ModifiedMLP(in_size='scalar', out_size='scalar', width_size=8, depth=3, key=net_key)
+        >>> # Input values
+        >>> y = net(jnp.array(1.9))
+        >>> y.shape
+        ()
+
         >>> key = jax.random.PRNGKey(0)
         >>> net_key, x_key = jax.random.split(key)
         >>> net = ModifiedMLP(in_size=4, out_size=2, width_size=8, depth=3, key=net_key)
@@ -28,7 +36,6 @@ class ModifiedMLP(eqx.Module):
 
     u: eqx.nn.Linear
     v: eqx.nn.Linear
-    mlp: eqx.nn.MLP
 
     def __init__(
         self,
@@ -44,9 +51,9 @@ class ModifiedMLP(eqx.Module):
         *,
         key: PRNGKeyArray,
     ):
-        mlp_key, u_key, v_key = jrandom.split(key, 3)
+        u_key, v_key, mlp_key = jrandom.split(key, 3)
 
-        self.mlp = eqx.nn.MLP(
+        super().__init__(
             in_size=in_size,
             out_size=out_size,
             width_size=width_size,
@@ -59,32 +66,28 @@ class ModifiedMLP(eqx.Module):
             key=mlp_key,
         )
 
-        self.u = eqx.nn.Linear(
-            in_features=in_size,
-            out_features=width_size,
-            use_bias=use_bias,
-            dtype=dtype,
-            key=u_key,
-        )
-        self.v = eqx.nn.Linear(
-            in_features=in_size,
-            out_features=width_size,
-            use_bias=use_bias,
-            dtype=dtype,
-            key=v_key,
+        self.u, self.v = (
+            eqx.nn.Linear(
+                in_features=in_size,
+                out_features=width_size,
+                use_bias=use_bias,
+                dtype=dtype,
+                key=k,
+            )
+            for k in (u_key, v_key)
         )
 
     def __call__(self, x: Array, *, key: PRNGKeyArray | None = None) -> Array:
         """Forward pass."""
 
-        u = self.mlp.activation(self.u(x))
-        v = self.mlp.activation(self.v(x))
+        u = self.activation(self.u(x))
+        v = self.activation(self.v(x))
 
-        for layer in self.mlp.layers[:-1]:
-            x = self.mlp.activation(layer(x))
+        for layer in self.layers[:-1]:
+            x = self.activation(layer(x))
             x = x * u + (1 - x) * v
 
-        x = self.mlp.final_activation(self.mlp.layers[-1](x))  # Last layer
+        x = self.final_activation(self.layers[-1](x))  # Last layer
 
         return x
 
@@ -107,7 +110,7 @@ class PirateBlock(eqx.Module):
         >>> key = jax.random.PRNGKey(42)
         >>> # split keys so block, u and v are independently initialized
         >>> block_key, u_key, v_key = jax.random.split(key, 3)
-        >>> block = PirateBlock(in_features=4, hidden_features=8, key=block_key)
+        >>> block = PirateBlock(io_size=4, width_size=8, key=block_key)
         >>> x = jnp.ones((4,))
         >>> # u and v must output hidden_features to match intermediate x
         >>> u = eqx.nn.Linear(in_features=4, out_features=8, key=u_key)
@@ -125,42 +128,50 @@ class PirateBlock(eqx.Module):
     """
 
     layers: tuple[eqx.nn.Linear, ...]
-    alpha: Float
+    io_size: int | Literal["scalar"]
+    width_size: int
     activation: Callable
+    alpha: Float
 
     def __init__(
         self,
-        in_features,
-        hidden_features,
-        activation=jax.nn.tanh,
+        io_size: int | Literal["scalar"],
+        width_size: int,
+        activation: Callable = jax.nn.tanh,
+        use_bias: bool = True,
         dtype=None,
         *,
         key=jrandom.PRNGKey(0),
     ):
-        fst, snd, thd = jax.random.split(key, 3)
+        fst_key, snd_key, thd_key = jax.random.split(key, 3)
 
         first_layer = eqx.nn.Linear(
-            in_features=in_features,
-            out_features=hidden_features,
+            in_features=io_size,
+            out_features=width_size,
             dtype=dtype,
-            key=fst,
+            key=fst_key,
+            use_bias=use_bias,
         )
         second_layer = eqx.nn.Linear(
-            in_features=hidden_features,
-            out_features=hidden_features,
+            in_features=width_size,
+            out_features=width_size,
             dtype=dtype,
-            key=snd,
+            key=snd_key,
+            use_bias=use_bias,
         )
         last_layer = eqx.nn.Linear(
-            in_features=hidden_features,
-            out_features=in_features,
+            in_features=width_size,
+            out_features=io_size,
             dtype=dtype,
-            key=thd,
+            key=thd_key,
+            use_bias=use_bias,
         )
 
         self.layers = (first_layer, second_layer, last_layer)
         self.alpha = jnp.array(0.0, dtype=dtype)
         self.activation = activation
+        self.io_size = io_size
+        self.width_size = width_size
 
     def __call__(self, x, u, v):
         """Forward pass."""
@@ -181,7 +192,6 @@ class PirateBlock(eqx.Module):
 
 class PirateNet(eqx.Module):
     """
-
     Implements an PirateNet as proposed in [1]. A pirate net consists of multiple PirateBlock
     layers.
 
@@ -189,6 +199,14 @@ class PirateNet(eqx.Module):
         >>> import jax
         >>> import jax.numpy as jnp
         >>> import equinox as eqx
+        >>> key = jax.random.PRNGKey(0)
+        >>> net_key, x_key = jax.random.split(key)
+        >>> net = PirateNet(in_size='scalar', out_size='scalar', width_size=8, depth=3, key=net_key)
+        >>> # Input values
+        >>> y = net(jnp.array(1.9))
+        >>> y.shape
+        ()
+
         >>> key = jax.random.PRNGKey(0)
         >>> net_key, x_key = jax.random.split(key)
         >>> net = PirateNet(in_size=4, out_size=2, width_size=8, depth=3, key=net_key)
@@ -233,25 +251,21 @@ class PirateNet(eqx.Module):
         u_key, v_key, *keys = jax.random.split(key, depth + 2)
         keys_iter = iter(keys)
 
-        self.u = eqx.nn.Linear(
-            in_features=in_size,
-            out_features=width_size,
-            use_bias=use_bias,
-            dtype=dtype,
-            key=u_key,
-        )
-        self.v = eqx.nn.Linear(
-            in_features=in_size,
-            out_features=width_size,
-            use_bias=use_bias,
-            dtype=dtype,
-            key=v_key,
+        self.u, self.v = (
+            eqx.nn.Linear(
+                in_features=in_size,
+                out_features=width_size,
+                use_bias=use_bias,
+                dtype=dtype,
+                key=k,
+            )
+            for k in (u_key, v_key)
         )
 
         self.pirate_layers = tuple(
             PirateBlock(
-                in_features=in_size,
-                hidden_features=width_size,
+                io_size=in_size,
+                width_size=width_size,
                 activation=activation,
                 dtype=dtype,
                 key=next(keys_iter),
@@ -260,7 +274,11 @@ class PirateNet(eqx.Module):
         )
 
         self.last_layer = eqx.nn.Linear(
-            in_size, out_size, use_final_bias, dtype=dtype, key=next(keys_iter)
+            in_size,
+            out_size,
+            use_final_bias,
+            dtype=dtype,
+            key=next(keys_iter),
         )
 
         self.in_size = in_size
