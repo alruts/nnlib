@@ -13,8 +13,6 @@ dependencies = [
     "jax>=0.7.2",
     "jaxlib>=0.7.2",
     "pytest>=8.4.2",
-    "test-bench",
-    "torch>=2.8.0",
 ]
 
 [build-system]
