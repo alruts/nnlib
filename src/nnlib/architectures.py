@@ -9,7 +9,7 @@ from jaxtyping import Array, Float, PRNGKeyArray
 
 class ModifiedMLP(eqx.nn.MLP):
     """
-    A modified multi-layer perceptron (MLP) from [1] that applies learned linear
+    A podified multi-layer perceptron (MLP) from [1] that applies learned linear
     modulators `u` and `v` to the hidden layers before the final output.
 
     Example:

@@ -1,12 +1,13 @@
 from typing import Callable, Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 from jax import Array
 from jaxtyping import PRNGKeyArray
 
-from nnlib.models.architectures import ModifiedMLP
+from nnlib.architectures import ModifiedMLP
 
 
 def reparametrize_linear(
@@ -16,7 +17,28 @@ def reparametrize_linear(
     *,
     key: PRNGKeyArray,
 ) -> eqx.nn.Linear:
-    """Reparametrize a Linear layer's weights (and bias)."""
+    """Reparametrize a Linear layer's weights (and bias).
+
+    Example:
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> import equinox as eqx
+        >>> key = jax.random.PRNGKey(0)
+        >>> linear = eqx.nn.Linear(2, 3, key=key)
+        >>> orig_w = linear.weight
+        >>> orig_b = linear.bias
+        >>> def w_dist(k, shape): return jax.random.normal(k, shape)
+        >>> def b_dist(k, shape): return jax.random.normal(k, shape)
+        >>> new_linear = reparametrize_linear(linear, w_dist, b_dist, key=key)
+        >>> new_linear.weight.shape
+        (3, 2)
+        >>> new_linear.bias.shape
+        (3,)
+        >>> not jnp.allclose(new_linear.weight, orig_w)
+        True
+        >>> not jnp.allclose(new_linear.bias, orig_b)
+        True
+    """
 
     wkey, bkey = jrandom.split(key)
 
@@ -118,10 +140,7 @@ def make_siren(
     first_layer = reparametrize_linear(
         mlp.layers[0],
         weight_dist=lambda k, s: siren_uniform(
-            s,
-            omega_0=angular_frequency,
-            is_first=True,
-            key=k,
+            s, omega_0=angular_frequency, is_first=True, key=k
         ),
         bias_dist=lambda _, s: jnp.zeros(s),
         key=next(key_iter),
@@ -131,10 +150,7 @@ def make_siren(
         reparametrize_linear(
             layer,
             weight_dist=lambda k, s: siren_uniform(
-                s,
-                omega_0=angular_frequency,
-                is_first=False,
-                key=k,
+                s, omega_0=angular_frequency, is_first=False, key=k
             ),
             bias_dist=lambda _, s: jnp.zeros(s),
             key=next(key_iter),
@@ -170,7 +186,7 @@ def make_modified_siren(
         >>> import jax
         >>> import jax.numpy as jnp
         >>> key = jax.random.PRNGKey(0)
-        >>> model = make_modified_siren(2, 2, width_size=16, depth=3, key=key)
+        >>> model = make_modified_siren(2, 2, width_size=2, depth=2, key=key)
         >>> x = jnp.array([1.0, 0.0])
         >>> y = model(x)
         >>> y.shape
@@ -181,8 +197,7 @@ def make_modified_siren(
     Functions." arXiv, Jun. 17, 2020. Accessed: Mar. 08, 2024. [Online].
     Available: http://arxiv.org/abs/2006.09661
     """
-    keys = jrandom.split(key, depth + 5)
-    mlp_key, *keys = keys
+    mlp_key, *keys = jrandom.split(key, depth + 4)
     key_iter = iter(keys)
 
     mod_mlp = ModifiedMLP(
@@ -198,50 +213,23 @@ def make_modified_siren(
         key=mlp_key,
     )
 
-    first_layer = reparametrize_linear(
-        mod_mlp.layers[0],
-        weight_dist=lambda k, s: siren_uniform(
-            s,
-            omega_0=angular_frequency,
-            is_first=True,
-            key=k,
-        ),
-        bias_dist=lambda _, s: jnp.zeros(s),
-        key=next(key_iter),
-    )
-
-    u = reparametrize_linear(
-        mod_mlp.u,
-        weight_dist=lambda k, s: siren_uniform(
-            s,
-            omega_0=angular_frequency,
-            is_first=True,
-            key=k,
-        ),
-        bias_dist=lambda _, s: jnp.zeros(s),
-        key=next(key_iter),
-    )
-
-    v = reparametrize_linear(
-        mod_mlp.v,
-        weight_dist=lambda k, s: siren_uniform(
-            s,
-            omega_0=angular_frequency,
-            is_first=True,
-            key=k,
-        ),
-        bias_dist=lambda _, s: jnp.zeros(s),
-        key=next(key_iter),
+    first_layer, u, v = (
+        reparametrize_linear(
+            layer,
+            weight_dist=lambda k, s: siren_uniform(
+                s, omega_0=angular_frequency, is_first=True, key=k
+            ),
+            bias_dist=lambda _, s: jnp.zeros(s),
+            key=next(key_iter),
+        )
+        for layer in (mod_mlp.layers[0], mod_mlp.u, mod_mlp.v)
     )
 
     other_layers = (
         reparametrize_linear(
             layer,
             weight_dist=lambda k, s: siren_uniform(
-                s,
-                omega_0=angular_frequency,
-                is_first=False,
-                key=k,
+                s, omega_0=angular_frequency, is_first=False, key=k
             ),
             bias_dist=lambda _, s: jnp.zeros(s),
             key=next(key_iter),
@@ -249,11 +237,17 @@ def make_modified_siren(
         for layer in mod_mlp.layers[1:]
     )
 
+    mod_siren = mod_mlp
     for idx, new_layer in enumerate([first_layer, *other_layers]):
-        mod_mlp = eqx.tree_at(lambda m: m.layers[idx], mod_mlp, new_layer)
+        mod_siren = eqx.tree_at(lambda m: m.layers[idx], mod_siren, new_layer)
 
     # parameterize u and v
-    mod_mlp = eqx.tree_at(lambda m: m.u, mod_mlp, u)
-    mod_mlp = eqx.tree_at(lambda m: m.v, mod_mlp, v)
+    mod_siren = eqx.tree_at(lambda m: m.u, mod_siren, u)
+    mod_siren = eqx.tree_at(lambda m: m.v, mod_siren, v)
 
-    return mod_mlp
+    return mod_siren
+
+
+key = jax.random.PRNGKey(0)
+siren = make_modified_siren(2, 2, width_size=2, depth=2, key=key)
+tanhnn = ModifiedMLP(2, 2, width_size=2, depth=2, key=key)
