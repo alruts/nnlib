@@ -54,11 +54,7 @@ def reparametrize_linear(
     if not linear_layer.use_bias and bias_dist is not None:
         raise ValueError("Linear layer has bias=False but bias_dist was provided.")
 
-    if (
-        linear_layer.use_bias
-        and bias_dist is not None
-        and linear_layer.bias is not None
-    ):
+    if bias_dist and linear_layer.bias is not None:
         new_layer = eqx.tree_at(
             lambda layer: layer.bias,
             new_layer,
