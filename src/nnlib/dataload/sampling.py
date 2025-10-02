@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Sequence, Type
+from typing import NamedTuple, Sequence, Type
 
 import jax
 import jax.numpy as jnp
@@ -106,7 +106,7 @@ class BaseDataSampler(Dataset):
         raise NotImplementedError
 
 
-class BasicDataSampler(BaseDataSampler):
+class DataPointSampler(BaseDataSampler):
     """
     A simple data sampler that randomly samples batches of 3D points and associated values.
 
@@ -129,7 +129,7 @@ class BasicDataSampler(BaseDataSampler):
     def __init__(
         self,
         batch_size: int,
-        data: list[tuple[Point3d, Array]],
+        data: list[tuple[Point, float]],
         *,
         key=jrandom.PRNGKey(0),
     ):
@@ -137,6 +137,7 @@ class BasicDataSampler(BaseDataSampler):
         points, vals = zip(*self.data)
         self.points = jnp.array(points)
         self.vals = jnp.array(vals)
+        self.point_structure: Type[Point] = type(self.data[0][0])
 
     @partial(jax.pmap, static_broadcasted_argnums=(0,))
     def gen_data(self, key: jnp.ndarray):
@@ -144,8 +145,9 @@ class BasicDataSampler(BaseDataSampler):
         Sample a random batch of datapoints in parallel across devices.
         Returns a list/array shaped [num_devices, batch_size, ...]
         """
+
         # Sample indices for this device
         idx = jrandom.randint(key, shape=(self.batch_size,), minval=0, maxval=len(self))
         points = self.points[idx]
         vals = self.vals[idx]
-        return [(Point3d(*p), v) for p, v in zip(points, vals)]
+        return [(self.point_structure(*p), v) for p, v in zip(points, vals)]
