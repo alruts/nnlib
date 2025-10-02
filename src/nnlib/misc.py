@@ -41,14 +41,14 @@ def lift_to_args(fn):
     return wrapper
 
 
-def apply_model(self, params, *args):
+def apply_model(model, params, *args):
     """Trick to enable gradient with respect to weights."""
-    _, static = eqx.partition(self.model, eqx.is_inexact_array)
+    _, static = eqx.partition(model, eqx.is_inexact_array)
     model = eqx.combine(params, static)
     return model(*args[: model.in_features])
 
 
-def get_parameters(self):
+def get_parameters(model):
     """Returns the parameters of the model."""
-    params, _ = eqx.partition(self.model, eqx.is_inexact_array)
+    params, _ = eqx.partition(model, eqx.is_inexact_array)
     return params
