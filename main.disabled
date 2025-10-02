@@ -200,10 +200,6 @@ ny, nx = data.vals.shape
 x_idxs = jnp.searchsorted(x_coords[0, :], coords[:, 0])
 y_idxs = jnp.searchsorted(y_coords[:, 0], coords[:, 1])
 
-# Clip indices to avoid out-of-bounds
-x_idxs = jnp.clip(x_idxs, 0, nx - 1)
-y_idxs = jnp.clip(y_idxs, 0, ny - 1)
-
 # Fill in the sampled values
 masked_vals = masked_vals.at[y_idxs, x_idxs].set(vals)
 
