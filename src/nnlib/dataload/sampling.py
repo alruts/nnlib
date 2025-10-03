@@ -117,7 +117,7 @@ class DataPointSampler(BaseDataSampler):
     >>> data = [(Point3d(1.0, 2.0, 3.0), 10.0),
     ...         (Point3d(4.0, 5.0, 6.0), 20.0),
     ...         (Point3d(7.0, 8.0, 9.0), 30.0)]
-    >>> sampler = BasicDataSampler(batch_size=2, data=data, key=key)
+    >>> sampler = DataPointSampler(batch_size=2, data=data, key=key)
     >>> # Generate a batch (shape depends on number of devices)
     >>> batch = sampler[0]
     >>> isinstance(batch[0][0], Point3d)
