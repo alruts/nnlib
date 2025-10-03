@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Literal
 
 import equinox as eqx
 import jax
@@ -46,12 +46,13 @@ class WavePINN(eqx.Module):
     @classmethod
     def create(
         cls,
-        arch_name: Literal["modified_mlp", "mlp", "pirate_net"],
+        arch_name: Literal[
+            "modified_mlp", "mlp", "pirate_net", "siren", "modified_siren"
+        ],
         embedding: PeriodicEmbedding | RandomFourierEmbedding | eqx.nn.Identity,
         **arch_kwargs,
     ):
         model_cls = arch_lib[arch_name]
-        model = model_cls(**arch_kwargs)
 
         match embedding:
             case PeriodicEmbedding():
@@ -63,13 +64,14 @@ class WavePINN(eqx.Module):
             case _:
                 raise ValueError(f"Unsupported embedding: {embedding}")
 
+        model = model_cls(**arch_kwargs)
         return cls(model=model, embedding=embedding)
 
     def p_net(self, params, *args):
         """Forward computation of pressure"""
         # apply embeddings
-        args = lift_to_args(self.embedding)(*args)
-        return apply_model(self.model, params, *args)
+        input_arr = lift_to_args(self.embedding)(*args)
+        return apply_model(self.model, params, input_arr)
 
     def vn_net(self, params, *args):
         """Forward computation of normal velocity"""
