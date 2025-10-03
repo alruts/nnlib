@@ -45,10 +45,10 @@ def apply_model(model, params, *args):
     """Trick to enable gradient with respect to weights."""
     _, static = eqx.partition(model, eqx.is_inexact_array)
     model = eqx.combine(params, static)
-    return model(*args[: model.in_features])
+    return model(*args[: model.in_size])
 
 
 def get_parameters(model):
     """Returns the parameters of the model."""
-    params, _ = eqx.partition(model, eqx.is_inexact_array)
+    params, _ = eqx.partition(model, eqx.is_array)
     return params
