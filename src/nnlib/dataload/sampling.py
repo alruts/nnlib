@@ -68,7 +68,7 @@ class AbstractUniformSampler(BaseSampler):
 
 class DataPointSampler(BaseSampler):
     """
-    Randomly samples batches from a PointCloud.
+     Randomly samples batches from a PointCloud and returns separate arrays for each dimension.
 
     >>> import jax
     >>> from jax import random as jrandom
@@ -81,16 +81,16 @@ class DataPointSampler(BaseSampler):
     ...     vals=jnp.array([10.0, 20.0, 30.0])
     ... )
     >>> sampler = DataPointSampler(batch_size=2, point_cloud=data, key=key)
-    >>> batch = sampler[0]
-    >>> isinstance(batch, PointCloud)
+    >>> x, y, z, vals = next(iter(sampler))
+    >>> x.shape == (sampler.num_devices, 2)
     True
-    >>> batch.coords.shape == (sampler.num_devices, 2, 3)
+    >>> y.shape == (sampler.num_devices, 2)
     True
-    >>> batch.vals.shape == (sampler.num_devices, 2)
+    >>> z.shape == (sampler.num_devices, 2)
     True
-    >>> all(isinstance(x, jnp.ndarray) for x in batch.coords)
+    >>> vals.shape == (sampler.num_devices, 2)
     True
-    >>> all(isinstance(x, float) or isinstance(x, jnp.ndarray) for x in batch.vals)
+    >>> all(isinstance(arr, jnp.ndarray) for arr in [x, y, z, vals])
     True
     """
 
@@ -99,13 +99,18 @@ class DataPointSampler(BaseSampler):
         self.point_cloud = point_cloud
 
     @partial(pmap, static_broadcasted_argnums=(0,))
-    def gen_data(self, *, key: PRNGKeyArray):
+    def gen_data(self, *, key):
         idx = jrandom.randint(
             key,
             shape=(self.batch_size,),
             minval=0,
             maxval=self.point_cloud.coords.shape[0],
         )
-        coords = self.point_cloud.coords[idx]
-        vals = self.point_cloud.vals[idx]
-        return PointCloud(coords, vals)
+        coords = self.point_cloud.coords[idx]  # shape (batch_size, num_dims)
+        vals = self.point_cloud.vals[idx]  # shape (batch_size,)
+
+        # Split coords dynamically by dimension
+        coord_arrays = tuple(coords[:, i] for i in range(coords.shape[1]))
+
+        # Return all coordinate arrays + values
+        return (*coord_arrays, vals)
