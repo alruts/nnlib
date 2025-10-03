@@ -31,7 +31,12 @@ default_constants = {
 
 
 class WavePINN(eqx.Module):
-    """Structure for BVP model"""
+    """
+    PINN for the acoustic wave equation with optional input embeddings.
+
+    Models pressure fields, PDE residuals, and derived quantities
+    (velocity, impedance) with support for batched grid predictions.
+    """
 
     model: eqx.Module
     embedding: PeriodicEmbedding | RandomFourierEmbedding | eqx.nn.Identity
