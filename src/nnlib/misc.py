@@ -4,6 +4,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+_default_constants = {
+    "wave_speed": 343.20,
+    "medium_density": 1.2043,
+}  # matches COMSOL defaults
+
 
 def default_floating_dtype():
     if jax.config.jax_enable_x64:  # pyright: ignore
@@ -41,14 +46,37 @@ def lift_to_args(fn):
     return wrapper
 
 
+def default_wave_speed() -> float:
+    return _default_constants["wave_speed"]
+
+
+def default_medium_density() -> float:
+    return _default_constants["medium_density"]
+
+
 def apply_model(model, params, *args):
     """Trick to enable gradient with respect to weights."""
     _, static = eqx.partition(model, eqx.is_inexact_array)
     model = eqx.combine(params, static)
-    return model(*args[: model.in_size])
+    return model(*args)
 
 
 def get_parameters(model):
     """Returns the parameters of the model."""
     params, _ = eqx.partition(model, eqx.is_array)
     return params
+
+
+def mesh_vmap(fn, *args, mesh_axes):
+    """
+    Apply nested vmaps over arguments to get meshgrid-style outputs.
+    """
+    result_fn = fn
+    n_args = len(args)
+
+    # Apply vmaps from inner-most to outer-most
+    for arg_idx in reversed(mesh_axes):
+        in_axes = tuple(arg_idx if i == arg_idx else None for i in range(n_args))
+        result_fn = jax.vmap(result_fn, in_axes=in_axes)
+
+    return result_fn(*args)
