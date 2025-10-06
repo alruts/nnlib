@@ -1,11 +1,10 @@
 from functools import partial
-from typing import Sequence, Type
+from typing import Sequence
 
 import jax.numpy as jnp
 from jax import local_device_count, pmap
 from jax import random as jrandom
 from jaxtyping import PRNGKeyArray
-from test_bench.discretize import Point
 from torch.utils.data import Dataset
 
 from nnlib.dataload.data_structures import PointCloud
@@ -34,14 +33,15 @@ class AbstractUniformSampler(BaseSampler):
     Uniform sampler for a an abstract rectangular domain
 
     Example
-        >>> from pprint import pprint
         >>> bounds = [(0, 1), (0, 1)]
-        >>> sampler = AbstractUniformSampler(bounds, 3)
-        >>> batch_points = sampler[0]
-        >>> pprint(batch_points)
-        Array([[[0.5788324 , 0.22059739],
-                [0.10406339, 0.34068835],
-                [0.15728986, 0.6127726 ]]], dtype=float32)
+        >>> sampler = AbstractUniformSampler(bounds, 2)
+        >>> x, y = sampler[0]
+        >>> x.shape == (sampler.num_devices, 2)
+        True
+        >>> y.shape == (sampler.num_devices, 2)
+        True
+        >>> all(isinstance(arr, jnp.ndarray) for arr in [x, y])
+        True
     """
 
     def __init__(
@@ -57,13 +57,17 @@ class AbstractUniformSampler(BaseSampler):
     @partial(pmap, static_broadcasted_argnums=(0,))
     def gen_data(self, *, key: PRNGKeyArray):
         mins, maxs = zip(*self.bounds)
-        batch = jrandom.uniform(
+        coords = jrandom.uniform(
             key,
             shape=(self.batch_size, len(self.bounds)),
             minval=jnp.array(mins),
             maxval=jnp.array(maxs),
         )
-        return batch
+
+        # Split coordinates into x, y, z, ...
+        coord_arrays = tuple(coords[:, i] for i in range(coords.shape[1]))
+
+        return coord_arrays
 
 
 class DataPointSampler(BaseSampler):
@@ -81,7 +85,8 @@ class DataPointSampler(BaseSampler):
     ...     vals=jnp.array([10.0, 20.0, 30.0])
     ... )
     >>> sampler = DataPointSampler(batch_size=2, point_cloud=data, key=key)
-    >>> x, y, z, vals = next(iter(sampler))
+    >>> infinite_dataloader = iter(sampler)
+    >>> x, y, z, vals = next(infinite_dataloader)
     >>> x.shape == (sampler.num_devices, 2)
     True
     >>> y.shape == (sampler.num_devices, 2)
@@ -106,11 +111,10 @@ class DataPointSampler(BaseSampler):
             minval=0,
             maxval=self.point_cloud.coords.shape[0],
         )
-        coords = self.point_cloud.coords[idx]  # shape (batch_size, num_dims)
-        vals = self.point_cloud.vals[idx]  # shape (batch_size,)
+        coords = self.point_cloud.coords[idx]
+        vals = self.point_cloud.vals[idx]
 
-        # Split coords dynamically by dimension
+        # Split coordinates into x, y, z, ...
         coord_arrays = tuple(coords[:, i] for i in range(coords.shape[1]))
 
-        # Return all coordinate arrays + values
         return (*coord_arrays, vals)
