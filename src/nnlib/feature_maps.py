@@ -3,18 +3,19 @@ from typing import Tuple
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array
 
 
-class PeriodicEmbedding(eqx.Module):
+class PeriodicFeatures(eqx.Module):
     """Periodic embeddings with per-axis trainable periods applied to all inputs.
 
     Example:
         >>> import jax.numpy as jnp
         >>> import equinox as eqx
         >>> periods = (1.0, 2.0)
-        >>> emb = PeriodicEmbedding(periods=periods)
+        >>> transform = PeriodicFeatures(periods=periods)
         >>> x = jnp.array([0.0])
-        >>> emb(x)
+        >>> transform(x)
         Array([1., 0.], dtype=float32)
     """
 
@@ -30,7 +31,7 @@ class PeriodicEmbedding(eqx.Module):
         )
 
 
-class RandomFourierEmbedding(eqx.Module):
+class RandomFourierFeatures(eqx.Module):
     """Fourier embeddings with random Gaussian kernel
 
     Example:
@@ -38,16 +39,16 @@ class RandomFourierEmbedding(eqx.Module):
         >>> import jax.numpy as jnp
         >>> import equinox as eqx
         >>> key = jax.random.PRNGKey(0)
-        >>> emb = RandomFourierEmbedding(embed_scale=1.0, embed_dim=8, in_dim=3, key=key)
+        >>> transform = RandomFourierFeatures(embed_scale=1.0, embed_dim=8, in_dim=3, key=key)
         >>> x = jnp.array([1.0, 2.0, 3.0])
-        >>> y = emb(x)
+        >>> y = transform(x)
         >>> y.shape
         (8,)
     """
 
     embed_scale: float
     embed_dim: int
-    kernel: jax.Array
+    kernel: Array
 
     def __init__(self, embed_scale, embed_dim, in_dim, *, key):
         _, key = jax.random.split(key, 2)
