@@ -6,8 +6,13 @@ import jax.numpy as jnp
 from jax import vmap
 
 from nnlib.architectures import ModifiedMLP, PirateNet
-from nnlib.embeddings import PeriodicEmbedding, RandomFourierEmbedding
-from nnlib.misc import apply_model, lift_to_args
+from nnlib.feature_maps import PeriodicFeatures, RandomFourierFeatures
+from nnlib.misc import (
+    apply_model,
+    default_medium_density,
+    default_wave_speed,
+    lift_to_args,
+)
 from nnlib.reparametrize import make_modified_siren, make_siren
 
 arch_lib = {
@@ -17,17 +22,6 @@ arch_lib = {
     "siren": make_siren,
     "pirate_net": PirateNet,
 }
-
-criteria = {
-    "mse": lambda x, y, axis=None: jnp.mean((x - y) ** 2, axis),
-    "mae": lambda x, y, axis=None: jnp.mean(jnp.abs(x - y), axis),
-}
-
-
-default_constants = {
-    "wave_speed": 343.20,
-    "medium_density": 1.2043,
-}  # matches COMSOL defaults
 
 
 class WavePINN(eqx.Module):
@@ -39,9 +33,9 @@ class WavePINN(eqx.Module):
     """
 
     model: eqx.Module
-    embedding: PeriodicEmbedding | RandomFourierEmbedding | eqx.nn.Identity
-    wave_speed: float = 343.2
-    medium_density: float = 1.2
+    embedding: PeriodicFeatures | RandomFourierFeatures | eqx.nn.Identity
+    wave_speed: float = default_wave_speed()
+    medium_density: float = default_medium_density()
 
     @classmethod
     def create(
@@ -49,15 +43,17 @@ class WavePINN(eqx.Module):
         arch_name: Literal[
             "modified_mlp", "mlp", "pirate_net", "siren", "modified_siren"
         ],
-        embedding: PeriodicEmbedding | RandomFourierEmbedding | eqx.nn.Identity,
+        embedding: PeriodicFeatures | RandomFourierFeatures | eqx.nn.Identity,
+        wave_speed: float | None = None,
+        medium_density: float | None = None,
         **arch_kwargs,
     ):
         model_cls = arch_lib[arch_name]
 
         match embedding:
-            case PeriodicEmbedding():
+            case PeriodicFeatures():
                 arch_kwargs["in_size"] *= 2
-            case RandomFourierEmbedding():
+            case RandomFourierFeatures():
                 arch_kwargs["in_size"] = embedding.embed_dim
             case eqx.nn.Identity():
                 pass
@@ -65,7 +61,19 @@ class WavePINN(eqx.Module):
                 raise ValueError(f"Unsupported embedding: {embedding}")
 
         model = model_cls(**arch_kwargs)
-        return cls(model=model, embedding=embedding)
+
+        # defaults
+        wave_speed = wave_speed if wave_speed is not None else default_wave_speed()
+        medium_density = (
+            medium_density if medium_density is not None else default_medium_density()
+        )
+
+        return cls(
+            model=model,
+            embedding=embedding,
+            wave_speed=wave_speed,
+            medium_density=medium_density,
+        )
 
     def p_net(self, params, *args):
         """Forward computation of pressure"""
@@ -97,9 +105,7 @@ class WavePINN(eqx.Module):
         # Assume spatial first, then time
         laplacian = jnp.sum(diag_hess[:-1])
         p_tt = diag_hess[-1]
-
-        c = default_constants["wave_speed"]
-        residual = p_tt - (c**2) * laplacian
+        residual = p_tt - (self.wave_speed**2) * laplacian
 
         return residual
 
@@ -129,22 +135,3 @@ class WavePINN(eqx.Module):
     @eqx.filter_jit
     def update(self, params, opt_state, opt, batches):
         return params, opt_state
-
-
-def data_loss(model, params, batch, criterion=criteria["mse"]):
-    coords, vals = batch
-    pred = vmap(model.p_net, in_axes=(None, *[0] * len(coords)))(params, *coords)
-    return criterion(pred, vals)
-
-
-def pde_loss(model, params, batch, criterion=criteria["mse"]):
-    coords = batch
-    pred = vmap(model.r_net, in_axes=(None, *[0] * len(coords)))(params, *coords)
-    return criterion(pred, 0.0)
-
-
-def total_loss(model, params, batch, criterion=criteria["mse"]):
-    data_batch, pde_batch = batch
-    d = data_loss(model, params, data_batch, criterion)
-    r = pde_loss(model, params, pde_batch, criterion)
-    return d + r

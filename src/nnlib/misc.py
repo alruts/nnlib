@@ -65,18 +65,3 @@ def get_parameters(model):
     """Returns the parameters of the model."""
     params, _ = eqx.partition(model, eqx.is_array)
     return params
-
-
-def mesh_vmap(fn, *args, mesh_axes):
-    """
-    Apply nested vmaps over arguments to get meshgrid-style outputs.
-    """
-    result_fn = fn
-    n_args = len(args)
-
-    # Apply vmaps from inner-most to outer-most
-    for arg_idx in reversed(mesh_axes):
-        in_axes = tuple(arg_idx if i == arg_idx else None for i in range(n_args))
-        result_fn = jax.vmap(result_fn, in_axes=in_axes)
-
-    return result_fn(*args)

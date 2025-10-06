@@ -7,13 +7,18 @@ import optax
 from jax import numpy as jnp
 from jax import random as jrandom
 from matplotlib import pyplot as plt
-from numpy import identity
 from tqdm import tqdm
 
-from nnlib import embeddings
+from nnlib import feature_maps
 from nnlib.dataload import subset
-from nnlib.dataload.sampling import DataPointSampler
-from nnlib.misc import get_parameters
+from nnlib.dataload.sampling import AbstractUniformSampler, DataPointSampler
+from nnlib.losses import (
+    compute_weighted_loss,
+    compute_weights,
+    data_loss,
+    pde_loss,
+    update_weights,
+)
 from nnlib.pinn import WavePINN
 
 # load data structure from .pkl file
@@ -21,89 +26,96 @@ data_path = Path("./data/gt_data.pkl")
 with open(data_path, "rb") as f:
     data = pickle.load(f)
 
-_key = jrandom.PRNGKey(0)
-data_key, subsample_key, net_key, emb_key = jrandom.split(_key, 4)
-
-data = subset.full_data(data=data)
+seed_key = jrandom.PRNGKey(0)
+data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 
 dataset = DataPointSampler(
-    point_cloud=data,
+    point_cloud=subset.random_sample(data=data, num_points=1_000, key=subsample_key),
     batch_size=1024,
     key=data_key,
 )
 
-dataloader = iter(dataset)
+domain_sampler = AbstractUniformSampler([(-1, 1), (-1, 1)], batch_size=32, key=dom_key)
+
+infinite_dataloader = iter(dataset)
+infinite_point_generator = iter(domain_sampler)
 
 # define architecture
-emb = embeddings.RandomFourierEmbedding(
-    embed_scale=1.0, embed_dim=16, in_dim=2, key=emb_key
+rff_emb = feature_maps.RandomFourierFeatures(
+    embed_scale=20.0, embed_dim=32, in_dim=2, key=emb_key
 )
-# emb = eqx.nn.Identity()
-pinn = WavePINN.create(
-    embedding=emb,
-    arch_name="modified_siren",
-    in_size=2,
-    out_size="scalar",
-    width_size=64,
-    depth=5,
-    key=net_key,
+id_emb = eqx.nn.Identity()
+
+setups = (
+    ["mlp", rff_emb],
+    ["modified_mlp", rff_emb],
+    ["pirate_net", rff_emb],
+    ["siren", id_emb],
+    ["modified_siren", id_emb],
 )
 
+loss_dict = {"data": data_loss, "pde": pde_loss}
+weight_dict = {"data": jnp.array(1.0), "pde": jnp.array(1.0)}
 
-params, static = eqx.partition(pinn.model, filter_spec=eqx.is_array)
+loss_fn = compute_weighted_loss
+update_weights_every = 100
 
+for arch, emb in setups:
+    pinn = WavePINN.create(
+        embedding=emb,
+        arch_name=arch,
+        in_size=2,
+        out_size="scalar",
+        width_size=64,
+        depth=3,
+        key=net_key,
+    )
 
-criteria = {
-    "mse": lambda x, y, axis=None: jnp.mean((x - y) ** 2, axis),
-    "mae": lambda x, y, axis=None: jnp.mean(jnp.abs(x - y), axis),
-}
+    params, static = eqx.partition(pinn.model, filter_spec=eqx.is_array)
+    learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
+    optimizer = optax.adam(learning_rate)
+    opt_state = optimizer.init(params)
 
+    @eqx.filter_jit
+    def train_step(model, params, opt_state, weights, batch):
+        (total, seperate), grads = jax.value_and_grad(loss_fn, has_aux=True)(
+            params,
+            model=model,
+            weights=weights,
+            batch=batch,
+            losses=loss_dict,
+        )
 
-learning_rate = 1e-4
-optimizer = optax.adam(learning_rate)
-opt_state = optimizer.init(params)
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+        return params, opt_state, (total, seperate)
 
+    total_steps = 10_000
+    for step, data_points, pde_points in tqdm(
+        zip(range(total_steps), infinite_dataloader, infinite_point_generator),
+        total=total_steps,
+    ):
+        batch = {"data": data_points, "pde": pde_points}
+        params, opt_state, loss = train_step(
+            pinn, params, opt_state, weight_dict, batch
+        )
 
-@eqx.filter_jit
-def train_step(model, params, opt_state, batch):
-    def data_loss(model, params, batch, criterion=criteria["mse"]):
-        *coords, vals = batch
-        n_dim = len(coords)
+        if step % update_weights_every == 0:
+            new_weights = compute_weights(params, pinn, batch, loss_dict)
+            weight_dict = update_weights(0.9, weight_dict, new_weights)
 
-        # vectorize and parallelize
-        batched_p_net = jax.vmap(model.p_net, in_axes=(None, *[0] * n_dim))
-        parallel_p_net = jax.pmap(batched_p_net, in_axes=(None, *[0] * n_dim))
+    # Define grid
+    X, Y = data.coordinate_arrays
+    x, y = (X.ravel(), Y.ravel())
 
-        # make prediction
-        pred = parallel_p_net(params, *coords)
-        return criterion(pred, vals)  # error measure
+    # Evaluate on the grid
+    pressure = pinn.pressure_pred_fn(params, x, y)
+    pressure = pressure.reshape(data.vals.shape)
 
-    loss, grads = jax.value_and_grad(data_loss, argnums=1)(model, params, batch)
-    updates, opt_state = optimizer.update(grads, opt_state, params)
-    params = optax.apply_updates(params, updates)
-    return params, opt_state, loss
-
-
-train_steps = 20_000
-for step, batch in tqdm(zip(range(train_steps), dataloader), total=train_steps):
-    params, opt_state, loss = train_step(pinn, params, opt_state, batch)
-
-
-# Define grid
-nx, ny = 300, 300  # resolution
-x = jnp.linspace(-1, 1, nx)
-y = jnp.linspace(-1, 1, ny)
-X, Y = jnp.meshgrid(x, y, indexing="ij")  # shape: (nx, ny)
-coords = (X.ravel(), Y.ravel())  # flatten to (nx*ny,)
-
-# Evaluate on the grid
-pressure = pinn.pressure_pred_fn(params, *coords)  # shape: (nx*ny,)
-pressure = pressure.reshape((nx, ny))  # reshape back to 2D
-
-plt.figure(figsize=(6, 5))
-plt.imshow(pressure.T, origin="lower", extent=(0, 1, 0, 1), cmap="viridis")
-plt.colorbar(label="Pressure")
-plt.xlabel("x")
-plt.ylabel("y")
-plt.title("Pressure Field")
-plt.show()
+    plt.figure(figsize=(6, 5))
+    plt.imshow(pressure.T, origin="lower", extent=(-1, 1, -1, 1), cmap="viridis")
+    plt.colorbar(label="Pressure")
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.savefig(f"{arch}_{emb}.png")
+    print(f"saved: {arch}_{emb}.png")
