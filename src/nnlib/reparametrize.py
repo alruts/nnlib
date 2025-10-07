@@ -154,6 +154,7 @@ def make_siren(
         for layer in mlp.layers[1:]
     )
 
+    # model surgery
     for idx, new_layer in enumerate([first_layer, *other_layers]):
         mlp = eqx.tree_at(lambda m: m.layers[idx], mlp, new_layer)
 
@@ -227,23 +228,18 @@ def make_modified_siren(
             weight_dist=lambda k, s: siren_uniform(
                 s, omega_0=angular_frequency, is_first=False, key=k
             ),
-            bias_dist=lambda _, s: jnp.zeros(s),
+            bias_dist=lambda _, s: jnp.zeros(s),  # zero bias
             key=next(key_iter),
         )
         for layer in mod_mlp.layers[1:]
     )
 
+    # model surgery
     mod_siren = mod_mlp
     for idx, new_layer in enumerate([first_layer, *other_layers]):
         mod_siren = eqx.tree_at(lambda m: m.layers[idx], mod_siren, new_layer)
 
-    # parameterize u and v
     mod_siren = eqx.tree_at(lambda m: m.u, mod_siren, u)
     mod_siren = eqx.tree_at(lambda m: m.v, mod_siren, v)
 
     return mod_siren
-
-
-key = jax.random.PRNGKey(0)
-siren = make_modified_siren(2, 2, width_size=2, depth=2, key=key)
-tanhnn = ModifiedMLP(2, 2, width_size=2, depth=2, key=key)
