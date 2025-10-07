@@ -30,12 +30,12 @@ seed_key = jrandom.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 
 dataset = DataPointSampler(
-    point_cloud=subset.random_sample(data=data, num_points=1_000, key=subsample_key),
+    point_cloud=subset.full_data(data=data),
     batch_size=1024,
     key=data_key,
 )
 
-domain_sampler = AbstractUniformSampler([(-1, 1), (-1, 1)], batch_size=32, key=dom_key)
+domain_sampler = AbstractUniformSampler([(-1, 1), (-1, 1)], batch_size=256, key=dom_key)
 
 infinite_dataloader = iter(dataset)
 infinite_point_generator = iter(domain_sampler)
@@ -72,7 +72,7 @@ for arch, emb in setups:
     )
 
     params, static = eqx.partition(pinn.model, filter_spec=eqx.is_array)
-    learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
+    learning_rate = optax.schedules.exponential_decay(1e-3, 1000, 0.9)
     optimizer = optax.adam(learning_rate)
     opt_state = optimizer.init(params)
 
@@ -90,7 +90,7 @@ for arch, emb in setups:
         params = optax.apply_updates(params, updates)
         return params, opt_state, (total, seperate)
 
-    total_steps = 10_000
+    total_steps = 8000
     for step, data_points, pde_points in tqdm(
         zip(range(total_steps), infinite_dataloader, infinite_point_generator),
         total=total_steps,
@@ -119,3 +119,4 @@ for arch, emb in setups:
     plt.ylabel("y")
     plt.savefig(f"{arch}_{emb}.png")
     print(f"saved: {arch}_{emb}.png")
+    plt.show()
