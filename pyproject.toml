@@ -13,14 +13,14 @@ dependencies = [
     "jax>=0.7.2",
     "jaxlib>=0.7.2",
     "matplotlib>=3.10.6",
+    "optax>=0.2.6",
     "pytest>=8.4.2",
-    "test-bench",
+    "tensorflow>=2.20.0",
     "torch>=2.8.0",
+    "tqdm>=4.67.1",
 ]
 
 [build-system]
 requires = ["uv_build>=0.8.21,<0.9.0"]
 build-backend = "uv_build"
 
-[tool.uv.sources]
-test-bench = { path = "../piml-test-bench" }
