@@ -64,8 +64,8 @@ def reparametrize_linear(
     return new_layer
 
 
-def siren_uniform(shape, omega_0, *, is_first=False, key: PRNGKeyArray) -> Array:
-    """SIREN initialization distribution."""
+def siren_weight_dist(shape, omega_0, *, is_first=False, key: PRNGKeyArray) -> Array:
+    """SIREN initialization distribution for weights."""
     out_features, in_features = shape
 
     if is_first:
@@ -73,6 +73,15 @@ def siren_uniform(shape, omega_0, *, is_first=False, key: PRNGKeyArray) -> Array
     else:
         lim = jnp.sqrt(6.0 / in_features) / omega_0
     return jrandom.uniform(key, (out_features, in_features), minval=-lim, maxval=lim)
+
+
+def siren_bias_dist(shape, *, is_first=False, key: PRNGKeyArray) -> Array:
+    """SIREN initialization distribution for biases."""
+    if is_first:
+        lim = 1
+        return jrandom.uniform(key, shape, minval=-lim, maxval=lim)
+    else:
+        return jnp.zeros(shape)
 
 
 def _siren_activation(x, angular_frequency):
@@ -135,20 +144,20 @@ def make_siren(
 
     first_layer = reparametrize_linear(
         mlp.layers[0],
-        weight_dist=lambda k, s: siren_uniform(
+        weight_dist=lambda k, s: siren_weight_dist(
             s, omega_0=angular_frequency, is_first=True, key=k
         ),
-        bias_dist=lambda _, s: jnp.zeros(s),
+        bias_dist=lambda k, s: siren_bias_dist(s, is_first=True, key=k),
         key=next(key_iter),
     )
 
     other_layers = (
         reparametrize_linear(
             layer,
-            weight_dist=lambda k, s: siren_uniform(
+            weight_dist=lambda k, s: siren_weight_dist(
                 s, omega_0=angular_frequency, is_first=False, key=k
             ),
-            bias_dist=lambda _, s: jnp.zeros(s),
+            bias_dist=lambda k, s: siren_bias_dist(s, is_first=False, key=k),
             key=next(key_iter),
         )
         for layer in mlp.layers[1:]
@@ -213,10 +222,10 @@ def make_modified_siren(
     first_layer, u, v = (
         reparametrize_linear(
             layer,
-            weight_dist=lambda k, s: siren_uniform(
+            weight_dist=lambda k, s: siren_weight_dist(
                 s, omega_0=angular_frequency, is_first=True, key=k
             ),
-            bias_dist=lambda _, s: jnp.zeros(s),
+            bias_dist=lambda k, s: siren_bias_dist(s, is_first=True, key=k),
             key=next(key_iter),
         )
         for layer in (mod_mlp.layers[0], mod_mlp.u, mod_mlp.v)
@@ -225,10 +234,10 @@ def make_modified_siren(
     other_layers = (
         reparametrize_linear(
             layer,
-            weight_dist=lambda k, s: siren_uniform(
+            weight_dist=lambda k, s: siren_weight_dist(
                 s, omega_0=angular_frequency, is_first=False, key=k
             ),
-            bias_dist=lambda _, s: jnp.zeros(s),  # zero bias
+            bias_dist=lambda k, s: siren_bias_dist(s, is_first=False, key=k),
             key=next(key_iter),
         )
         for layer in mod_mlp.layers[1:]
