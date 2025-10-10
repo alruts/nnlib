@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from jaxtyping import PRNGKeyArray
 
-from nnlib.dataload.data_structures import PointCloud, SpatialDiscretisationND
+from nnlib.data_utils.data_structures import PointCloud, SpatialDiscretisationND
 
 
 def grid_sample(
@@ -13,7 +13,7 @@ def grid_sample(
     Grid sample a SpatialDiscretisationND object.
 
     >>> import jax.numpy as jnp
-    >>> from nnlib.dataload.data_structures import SpatialDiscretisationND, PointCloud
+    >>> from nnlib.data_utils.data_structures import SpatialDiscretisationND, PointCloud
     >>> data = SpatialDiscretisationND.discretise_fn(bounds=[(0,1),(0,1)], n_points=[2,2], fn=lambda x: 0.0)
     >>> pc = grid_sample(data, num_indices_per_dim=(2, 2))
     >>> isinstance(pc, PointCloud)
@@ -53,7 +53,7 @@ def random_sample(
 
     >>> import jax
     >>> import jax.numpy as jnp
-    >>> from nnlib.dataload.data_structures import SpatialDiscretisationND, PointCloud
+    >>> from nnlib.data_utils.data_structures import SpatialDiscretisationND, PointCloud
     >>> key = jax.random.PRNGKey(0)
     >>> data = SpatialDiscretisationND.discretise_fn(bounds=[(0,1),(0,1)], n_points=[2,2], fn=lambda x: 0.0)
     >>> pc = random_sample(data, num_points=2, key=key)
@@ -83,7 +83,7 @@ def full_data(
     Return all points from a SpatialDiscretisationND object as a PointCloud.
 
     >>> import jax.numpy as jnp
-    >>> from nnlib.dataload.data_structures import SpatialDiscretisationND, PointCloud
+    >>> from nnlib.data_utils.data_structures import SpatialDiscretisationND, PointCloud
     >>> data = SpatialDiscretisationND.discretise_fn(bounds=[(0,1),(0,1)], n_points=[2,2], fn=lambda x: 0.0)
     >>> pc = full_data(data)
     >>> isinstance(pc, PointCloud)

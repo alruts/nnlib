@@ -5,12 +5,11 @@ import jax.numpy as jnp
 from jax import local_device_count, pmap
 from jax import random as jrandom
 from jaxtyping import PRNGKeyArray
-from torch.utils.data import Dataset
 
-from nnlib.dataload.data_structures import PointCloud
+from nnlib.data_utils.data_structures import PointCloud
 
 
-class BaseSampler(Dataset):
+class BaseSampler:
     """Base class for coordinate sampling."""
 
     def __init__(self, batch_size, *, key=jrandom.PRNGKey(0)):
@@ -28,13 +27,13 @@ class BaseSampler(Dataset):
         raise NotImplementedError
 
 
-class AbstractUniformSampler(BaseSampler):
+class UniformSampler(BaseSampler):
     """
-    Uniform sampler for a an abstract rectangular domain
+    Uniform sampler for a an rectangular domain
 
     Example
         >>> bounds = [(0, 1), (0, 1)]
-        >>> sampler = AbstractUniformSampler(bounds, 2)
+        >>> sampler = UniformSampler(bounds, 2)
         >>> x, y = sampler[0]
         >>> x.shape == (sampler.num_devices, 2)
         True
