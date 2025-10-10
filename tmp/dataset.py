@@ -6,8 +6,8 @@ import jax.numpy as jnp
 from matplotlib import pyplot as plt
 from PIL import Image
 
-from nnlib.dataload.data_structures import SpatialDiscretisationND
-from nnlib.dataload.subset import grid_sample, random_sample
+from nnlib.data_utils.data_structures import SpatialDiscretisationND
+from nnlib.data_utils.subset import grid_sample, random_sample
 
 # Load image
 file = Path(

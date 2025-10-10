@@ -10,8 +10,11 @@ from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 from nnlib import feature_maps
-from nnlib.dataload import subset
-from nnlib.dataload.sampling import AbstractUniformSampler, DataPointSampler
+from nnlib.data_utils import (
+    DataPointSampler,
+    UniformSampler,
+    grid_sample,
+)
 from nnlib.losses import (
     compute_weighted_loss,
     compute_weights,
@@ -30,17 +33,17 @@ seed_key = jrandom.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 
 dataset = DataPointSampler(
-    point_cloud=subset.full_data(data=data),
+    point_cloud=grid_sample(data, (50, 50)),  # returns `PointCloud`
     batch_size=1024,
     key=data_key,
 )
 
-domain_sampler = AbstractUniformSampler([(-1, 1), (-1, 1)], batch_size=256, key=dom_key)
+domain_sampler = UniformSampler([(-1, 1), (-1, 1)], batch_size=256, key=dom_key)
 
 infinite_dataloader = iter(dataset)
 infinite_point_generator = iter(domain_sampler)
 
-# define architecture
+# Define architecture
 rff_emb = feature_maps.RandomFourierFeatures(
     embed_scale=20.0, embed_dim=32, in_dim=2, key=emb_key
 )
@@ -96,19 +99,20 @@ for arch, emb in setups:
         total=total_steps,
     ):
         batch = {"data": data_points, "pde": pde_points}
-        params, opt_state, loss = train_step(
-            pinn, params, opt_state, weight_dict, batch
-        )
 
         if step % update_weights_every == 0:
             new_weights = compute_weights(params, pinn, batch, loss_dict)
             weight_dict = update_weights(0.9, weight_dict, new_weights)
 
-    # Define grid
+        params, opt_state, loss = train_step(
+            pinn, params, opt_state, weight_dict, batch
+        )
+
+    # ~~ Plot ~~
     X, Y = data.coordinate_arrays
     x, y = (X.ravel(), Y.ravel())
 
-    # Evaluate on the grid
+    # Evaluate on the grid of the original full data
     pressure = pinn.pressure_pred_fn(params, x, y)
     pressure = pressure.reshape(data.vals.shape)
 
