@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from jax import vmap
 
-from nnlib.architectures import ModifiedMLP, PirateNet
+from nnlib.architectures import ModifiedMLP, PirateNet, make_modified_siren, make_siren
 from nnlib.feature_maps import PeriodicFeatures, RandomFourierFeatures
 from nnlib.misc import (
     apply_model,
@@ -13,7 +13,6 @@ from nnlib.misc import (
     default_wave_speed,
     lift_to_args,
 )
-from nnlib.reparametrize import make_modified_siren, make_siren
 
 arch_lib = {
     "modified_mlp": ModifiedMLP,
