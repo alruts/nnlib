@@ -1,9 +1,10 @@
 from functools import partial
 from typing import Sequence
+from warnings import warn
 
 import jax.numpy as jnp
 import trimesh
-from jax import local_device_count, pmap, vmap
+from jax import Array, local_device_count, pmap, vmap
 from jax import random as jrandom
 from jaxtyping import PRNGKeyArray
 
@@ -77,25 +78,24 @@ class MeshSampler(BaseSampler):
     This sampler uniformly samples points on the surface of a given
     `trimesh.Trimesh` object using barycentric coordinates.
 
-    Examples
-    --------
-    >>> # Create a simple triangular mesh (a single triangle)
-    >>> vertices = jnp.array(
-    ...     [
-    ...         [0.0, 0.0, 0.0],
-    ...         [1.0, 0.0, 0.0],
-    ...         [0.0, 1.0, 0.0],
-    ...     ]
-    ... )
-    >>> faces = jnp.array([[0, 1, 2]])
-    >>> mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    >>>
-    >>> sampler = MeshSampler(mesh, batch_size=2, key=jrandom.PRNGKey(0))
-    >>> infinite_boundary_loader = iter(sampler)
-    >>> (x, y, z), (nx, ny, nz) = next(infinite_boundary_loader)
-    >>>
-    >>> assert all(arr.shape == (sampler.num_devices, 2) for arr in [x, y, z, nx, ny, nz])
-    >>> assert all(isinstance(arr, jnp.ndarray) for arr in [x, y, z, nx, ny, nz])
+    Example
+        >>> # Create a simple triangular mesh (a single triangle)
+        >>> vertices = jnp.array(
+        ...     [
+        ...         [0.0, 0.0, 0.0],
+        ...         [1.0, 0.0, 0.0],
+        ...         [0.0, 1.0, 0.0],
+        ...     ]
+        ... )
+        >>> faces = jnp.array([[0, 1, 2]])
+        >>> mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+        >>>
+        >>> sampler = MeshSampler(mesh, batch_size=2, key=jrandom.PRNGKey(0))
+        >>> infinite_boundary_loader = iter(sampler)
+        >>> (x, y, z), (nx, ny, nz) = next(infinite_boundary_loader)
+        >>>
+        >>> assert all(arr.shape == (sampler.num_devices, 2) for arr in [x, y, z, nx, ny, nz])
+        >>> assert all(isinstance(arr, jnp.ndarray) for arr in [x, y, z, nx, ny, nz])
     """
 
     def __init__(
@@ -106,15 +106,16 @@ class MeshSampler(BaseSampler):
         key: PRNGKeyArray = jrandom.PRNGKey(0),
     ):
         super().__init__(batch_size, key=key)
-        self.mesh = mesh
-        # Convert to JAX arrays
-        self.triangles = jnp.array(mesh.triangles, dtype=jnp.float32)
-        self.normals = jnp.array(mesh.face_normals, dtype=jnp.float32)
+        self.mesh: trimesh.Trimesh = mesh
+        self.triangles: Array = jnp.array(mesh.triangles, dtype=jnp.float32)
+        self.normals: Array = jnp.array(mesh.face_normals, dtype=jnp.float32)
+
+        if not self.mesh.is_watertight:
+            warn("Mesh is not watertight.")
 
     @partial(pmap, static_broadcasted_argnums=(0,))
     def gen_data(self, *, key: PRNGKeyArray):
         def sample_point_on_triangle(tri: Triangle, *, key: PRNGKeyArray):
-            # Sample two random numbers between 0 and 1
             key, subkey = jrandom.split(key)
             uv = jrandom.uniform(subkey, shape=(2,))
             u, v = uv[0], uv[1]
@@ -197,9 +198,3 @@ class DataPointSampler(BaseSampler):
         coord_arrays = tuple(coords[:, i] for i in range(coords.shape[1]))
 
         return (*coord_arrays, vals)
-
-
-import jax
-import jax.numpy as jnp
-import jax.random as jrandom
-import trimesh
