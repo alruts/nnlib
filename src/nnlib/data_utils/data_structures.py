@@ -11,6 +11,7 @@ SpaceTimePoint = Float[Array, "n_spatial + 1"]
 SpaceFreqPoint = Float[Array, "n_spatial + 1"]
 
 Point = CartesianPoint | SpaceTimePoint | SpaceFreqPoint
+Triangle = Float[jnp.ndarray, "3 n_spatial"]
 
 
 class PointCloud(NamedTuple):
@@ -215,3 +216,6 @@ class UnstructuredDiscretisationND(eqx.Module):
 
     def __rmul__(self, other):
         return self.__mul__(other)
+
+
+# mesh datastructure

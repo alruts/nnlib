@@ -2,11 +2,12 @@ from functools import partial
 from typing import Sequence
 
 import jax.numpy as jnp
-from jax import local_device_count, pmap
+import trimesh
+from jax import local_device_count, pmap, vmap
 from jax import random as jrandom
 from jaxtyping import PRNGKeyArray
 
-from nnlib.data_utils.data_structures import PointCloud
+from nnlib.data_utils.data_structures import PointCloud, Triangle
 
 
 class BaseSampler:
@@ -29,7 +30,7 @@ class BaseSampler:
 
 class UniformSampler(BaseSampler):
     """
-    Uniform sampler for a an rectangular domain
+    Uniform sampler for a rectangular domain
 
     Example
         >>> bounds = [(0, 1), (0, 1)]
@@ -67,6 +68,85 @@ class UniformSampler(BaseSampler):
         coord_arrays = tuple(coords[:, i] for i in range(coords.shape[1]))
 
         return coord_arrays
+
+
+class MeshSampler(BaseSampler):
+    """
+    Uniform sampler for a mesh.
+
+    This sampler uniformly samples points on the surface of a given
+    `trimesh.Trimesh` object using barycentric coordinates.
+
+    Examples
+    --------
+    >>> # Create a simple triangular mesh (a single triangle)
+    >>> vertices = jnp.array(
+    ...     [
+    ...         [0.0, 0.0, 0.0],
+    ...         [1.0, 0.0, 0.0],
+    ...         [0.0, 1.0, 0.0],
+    ...     ]
+    ... )
+    >>> faces = jnp.array([[0, 1, 2]])
+    >>> mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+    >>>
+    >>> sampler = MeshSampler(mesh, batch_size=2, key=jrandom.PRNGKey(0))
+    >>> infinite_boundary_loader = iter(sampler)
+    >>> (x, y, z), (nx, ny, nz) = next(infinite_boundary_loader)
+    >>>
+    >>> assert all(arr.shape == (sampler.num_devices, 2) for arr in [x, y, z, nx, ny, nz])
+    >>> assert all(isinstance(arr, jnp.ndarray) for arr in [x, y, z, nx, ny, nz])
+    """
+
+    def __init__(
+        self,
+        mesh: trimesh.Trimesh,
+        batch_size: int,
+        *,
+        key: PRNGKeyArray = jrandom.PRNGKey(0),
+    ):
+        super().__init__(batch_size, key=key)
+        self.mesh = mesh
+        # Convert to JAX arrays
+        self.triangles = jnp.array(mesh.triangles, dtype=jnp.float32)
+        self.normals = jnp.array(mesh.face_normals, dtype=jnp.float32)
+
+    @partial(pmap, static_broadcasted_argnums=(0,))
+    def gen_data(self, *, key: PRNGKeyArray):
+        def sample_point_on_triangle(tri: Triangle, *, key: PRNGKeyArray):
+            # Sample two random numbers between 0 and 1
+            key, subkey = jrandom.split(key)
+            uv = jrandom.uniform(subkey, shape=(2,))
+            u, v = uv[0], uv[1]
+
+            # Reflect if outside the triangle
+            u, v = jnp.where(u + v > 1, 1 - u, u), jnp.where(u + v > 1, 1 - v, v)
+            w = 1 - u - v
+
+            # Return barycentric combination
+            return u * tri[0] + v * tri[1] + w * tri[2]
+
+        key, *tri_keys = jrandom.split(key, self.batch_size + 1)
+
+        num_tris = len(self.mesh.triangles)
+        idxs = jrandom.randint(key, (self.batch_size,), minval=0, maxval=num_tris - 1)
+
+        # Select random triangles
+        these_triangles = self.triangles[idxs]
+        these_normals = self.normals[idxs]
+
+        # subsample each triangle
+        coords = vmap(sample_point_on_triangle)(
+            these_triangles, key=jnp.array(tri_keys)
+        )
+
+        # Split coordinates into x, y, z, ...
+        coord_arrays = tuple(coords[:, i] for i in range(coords.shape[1]))
+        normal_arrays = tuple(
+            these_normals[:, i] for i in range(these_normals.shape[1])
+        )
+
+        return coord_arrays, normal_arrays
 
 
 class DataPointSampler(BaseSampler):
@@ -117,3 +197,9 @@ class DataPointSampler(BaseSampler):
         coord_arrays = tuple(coords[:, i] for i in range(coords.shape[1]))
 
         return (*coord_arrays, vals)
+
+
+import jax
+import jax.numpy as jnp
+import jax.random as jrandom
+import trimesh
