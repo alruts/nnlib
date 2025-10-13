@@ -79,11 +79,3 @@ def siren_bias_dist(shape, *, is_first=False, key: PRNGKeyArray) -> Array:
         return jrandom.uniform(key, shape, minval=-lim, maxval=lim)
     else:
         return jnp.zeros(shape)
-
-
-def _siren_activation(x, angular_frequency):
-    return jnp.sin(angular_frequency * x)
-
-
-def _identity(x):
-    return x

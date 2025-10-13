@@ -1,6 +1,6 @@
 import jax
 from jax import numpy as jnp
-from jaxtyping import Complex
+from jaxtyping import Array, Complex
 
 from nnlib.misc import split_activation
 
@@ -20,3 +20,11 @@ def rotating_cardioid(z: Complex, b: Complex) -> Complex:
     arg = jnp.angle(z) + jnp.angle(b)
     cos_arg = jnp.cos(arg)
     return 0.5 * (1.0 + cos_arg) * z
+
+
+def sin_activation(x: Array, angular_frequency: float) -> Array:
+    return jnp.sin(angular_frequency * x)
+
+
+def identity_activation(x: Array) -> Array:
+    return x

@@ -6,9 +6,8 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from jaxtyping import Array, Float, PRNGKeyArray
 
+from nnlib.activations import identity_activation, sin_activation
 from nnlib.reparametrize import (
-    _identity,
-    _siren_activation,
     reparametrize_linear,
     siren_bias_dist,
     siren_weight_dist,
@@ -52,7 +51,7 @@ class ModifiedMLP(eqx.nn.MLP):
         width_size: int,
         depth: int,
         activation: Callable = jax.nn.tanh,
-        final_activation: Callable = lambda x: x,
+        final_activation: Callable = identity_activation,
         use_bias: bool = True,
         use_final_bias: bool = True,
         dtype=None,
@@ -323,8 +322,8 @@ def make_siren(
     out_size: int | Literal["scalar"],
     width_size: int,
     depth: int,
-    activation: Callable = _siren_activation,
-    final_activation: Callable = _identity,
+    activation: Callable = sin_activation,
+    final_activation: Callable = identity_activation,
     use_bias: bool = True,
     use_final_bias: bool = True,
     dtype=None,
@@ -401,8 +400,8 @@ def make_modified_siren(
     out_size: int | Literal["scalar"],
     width_size: int,
     depth: int,
-    activation: Callable = _siren_activation,
-    final_activation: Callable = _identity,
+    activation: Callable = sin_activation,
+    final_activation: Callable = identity_activation,
     use_bias: bool = True,
     use_final_bias: bool = True,
     dtype=None,
