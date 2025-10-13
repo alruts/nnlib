@@ -1,4 +1,5 @@
 from functools import wraps
+from typing import Callable
 
 import equinox as eqx
 import jax
@@ -10,6 +11,11 @@ _default_constants = {
 }  # matches COMSOL defaults
 
 
+def split_activation(fn: Callable):
+    """Lift activation from R->R to C->C."""
+    return lambda z: fn(jnp.real(z)) + 1j * fn(jnp.imag(z))
+
+
 def default_floating_dtype():
     if jax.config.jax_enable_x64:  # pyright: ignore
         return jnp.float64
@@ -17,7 +23,7 @@ def default_floating_dtype():
         return jnp.float32
 
 
-def lift_to_args(fn):
+def lift_to_args(fn: Callable):
     """
     Lift a function that expects a single array input to accept *args as scalars.
 

@@ -2,10 +2,12 @@ import jax
 from jax import numpy as jnp
 from jaxtyping import Complex
 
+from nnlib.misc import split_activation
+
 
 def complex_tanh(z: Complex) -> Complex:
     """Applies tanh separately to the real and imaginary parts of a complex number."""
-    return jax.nn.tanh(jnp.real(z)) + 1j * jax.nn.tanh(jnp.imag(z))
+    return split_activation(jax.nn.tanh)(z)
 
 
 def cardioid(z: Complex) -> Complex:
