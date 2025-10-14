@@ -3,42 +3,64 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
+from jax.scipy.special import erf
 from matplotlib import pyplot as plt
-from PIL import Image
 
 from nnlib.data_utils.data_structures import SpatialDiscretisationND
 from nnlib.data_utils.subset import grid_sample, random_sample
+from nnlib.misc import default_wave_speed
 
-# Load image
-file = Path(
-    "./data/The-famous-Lena-image-often-used-as-an-example-in-image-processing.png"
-)
-img = Image.open(file)
-img = jnp.array(img)[:, :, 0]  # take first channel
-img = img / 255.0
-img = jnp.rot90(img, k=-1)
+c = default_wave_speed()
 
-# data structure to represent "grid" like data
-data = SpatialDiscretisationND(
-    [(-1.0, 1.0), (-1.0, 1.0)],
-    vals=img,
+
+def acoustic_point_source_1d(coord):
+    """
+    1D acoustic point source u(x,t) with a Gaussian pulse.
+    Assumes constant wave speed c.
+
+    Gaussian pulse: S(t) = exp(-(t-t0)^2 / (2*sigma^2))
+    """
+    x, t = coord
+    sigma = 0.05  # pulse width
+    t0 = 0.3
+
+    # Retarded time
+    t_ret = t - jnp.abs(x) / c
+    t_ret = jnp.maximum(t_ret, 0.0)
+
+    # Analytical integral of Gaussian
+    u = (sigma * jnp.sqrt(jnp.pi / 2) / (2 * c)) * (
+        erf((t_ret - t0) / (jnp.sqrt(2) * sigma)) - erf(-t0 / (jnp.sqrt(2) * sigma))
+    )
+
+    return u
+
+
+# generate 'grid' data using acoustic point source function
+spatial_discretisation = SpatialDiscretisationND.discretise_fn(
+    [(0.0, 1.0), (0.0, 1.0)], [256, 256], acoustic_point_source_1d
 )
 
 # Serialize the data object
 save_path = Path("./data/gt_data.pkl")
 with open(save_path, "wb") as f:
-    pickle.dump(data, f)
+    pickle.dump(spatial_discretisation, f)
 print(f"SpatialDiscretisationND object saved to {save_path}")
 
 # To load it back later:
 with open(save_path, "rb") as f:
-    data = pickle.load(f)
+    spatial_discretisation = pickle.load(f)
 
 # Plot using the grid
 plt.figure(figsize=(6, 5))
 
 # Original
-plt.pcolormesh(*data.coordinate_arrays, data.vals, shading="auto", cmap="jet")
+plt.pcolormesh(
+    *spatial_discretisation.coordinate_arrays,
+    spatial_discretisation.vals,
+    shading="auto",
+    cmap="jet",
+)
 plt.title("Original Image")
 plt.colorbar()
 plt.xlabel("x")
@@ -53,7 +75,7 @@ key = jax.random.PRNGKey(0)
 
 # Sample random points
 num_points = 20_000
-subset = random_sample(data, num_points=num_points, key=key)
+subset = random_sample(spatial_discretisation, num_points=num_points, key=key)
 
 # Extract coordinates and values
 coords = subset.coords
@@ -79,7 +101,7 @@ plt.show()
 # Grid
 num_points = (100, 100)
 # Sample random points
-subset = grid_sample(data, num_points)
+subset = grid_sample(spatial_discretisation, num_points)
 
 # Extract coordinates and values
 coords = subset.coords
@@ -97,7 +119,7 @@ sc = plt.scatter(
 )
 plt.colorbar(sc, label="Value")
 plt.xlabel("x")
-plt.ylabel("y")
+plt.ylabel("t")
 plt.title(f"Random {num_points} Sampled Points")
 plt.axis("equal")
 plt.show()
