@@ -3,7 +3,7 @@ from .data_structures import (
     SpatialDiscretisationND,
     UnstructuredDiscretisationND,
 )
-from .sampling import DataPointSampler, UniformSampler
+from .sampling import DataPointSampler, MeshSampler, UniformSampler
 from .subset import full_data, grid_sample, random_sample
 
 __all__ = [
@@ -12,6 +12,7 @@ __all__ = [
     "UnstructuredDiscretisationND",
     "UniformSampler",
     "DataPointSampler",
+    "MeshSampler",
     "full_data",
     "grid_sample",
     "random_sample",
