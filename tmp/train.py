@@ -1,4 +1,5 @@
 import pickle
+from datetime import datetime
 from pathlib import Path
 
 import equinox as eqx
@@ -13,8 +14,10 @@ from nnlib import feature_maps
 from nnlib.data_utils import (
     DataPointSampler,
     UniformSampler,
-    grid_sample,
+    full_data,
 )
+from nnlib.data_utils.data_structures import SpatialDiscretisationND
+from nnlib.logger import TensorboardLogger
 from nnlib.losses import (
     compute_weighted_loss,
     compute_weights,
@@ -27,43 +30,102 @@ from nnlib.pinn import WavePINN
 # load data structure from .pkl file
 data_path = Path("./data/gt_data.pkl")
 with open(data_path, "rb") as f:
-    data = pickle.load(f)
+    data: SpatialDiscretisationND = pickle.load(f)
 
 seed_key = jrandom.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 
+
+#
+# Construct infinite data generators for PDE collocation points
+# and to load random batches of data points
+#
+
 dataset = DataPointSampler(
-    point_cloud=grid_sample(data, (50, 50)),  # returns `PointCloud`
-    batch_size=1024,
+    point_cloud=full_data(data),  # returns `PointCloud`
+    batch_size=128,
     key=data_key,
 )
 
-domain_sampler = UniformSampler([(-1, 1), (-1, 1)], batch_size=256, key=dom_key)
+domain_sampler = UniformSampler([(-1, 1), (-1, 1)], batch_size=128, key=dom_key)
 
+# These are infinitely iterable
 infinite_dataloader = iter(dataset)
 infinite_point_generator = iter(domain_sampler)
 
-# Define architecture
+# Random Fourier features for input coordinates helps with low-frequency bias
 rff_emb = feature_maps.RandomFourierFeatures(
     embed_scale=20.0, embed_dim=32, in_dim=2, key=emb_key
 )
-id_emb = eqx.nn.Identity()
+id_emb = eqx.nn.Identity()  # simply does nothing
 
-setups = (
+# Pairs of embeddings and architectures for loop
+arch_emb_pairs = (
+    ["siren", id_emb],
     ["mlp", rff_emb],
     ["modified_mlp", rff_emb],
     ["pirate_net", rff_emb],
-    ["siren", id_emb],
     ["modified_siren", id_emb],
 )
 
-loss_dict = {"data": data_loss, "pde": pde_loss}
-weight_dict = {"data": jnp.array(1.0), "pde": jnp.array(1.0)}
 
-loss_fn = compute_weighted_loss
+#
+# Here we define which loss functions to use during training
+#
+
+losses = {"data": data_loss, "pde": pde_loss}
 update_weights_every = 100
 
-for arch, emb in setups:
+# Arbitrary loss terms can be added, single loss also works
+# losses = {"data": data_loss}
+
+# Initialize the weights for adaptive grad norm, these are updated after the first step
+# and every `update_weights_every` steps after that
+loss_weights = {key: jnp.array(1.0) for key in losses.keys()}
+
+
+#
+# # Plot function for to pass into logger
+#
+
+
+@eqx.filter_jit
+def compute_pressure(params, pinn, data):
+    X, Y = data.coordinate_arrays
+    x, y = X.ravel(), Y.ravel()
+    pressure = pinn.pressure_pred_fn(params, x, y)
+    return pressure.reshape(data.vals.shape)
+
+
+def plot_pred(args):
+    params, pinn = args
+    pressure = compute_pressure(params, pinn, data)
+
+    fig = plt.figure(figsize=(6, 5))
+    plt.imshow(
+        pressure.T,
+        origin="lower",
+        extent=(*data.bounds[0], *data.bounds[1]),
+        cmap="jet",
+    )
+    plt.colorbar(label="Scalar Value")
+    plt.xlabel("x")
+    plt.ylabel("t")
+    return fig
+
+
+#
+# # Train the different architectures in a loop
+#
+
+for arch, emb in arch_emb_pairs:
+    # initialize logger
+    logger = TensorboardLogger(
+        experiment_name=f"gaussian-{datetime.now().strftime('%Y_%m_%d-%H_%M_%S')}"
+    )
+    log_every = 1000
+
+    # build PINN
     pinn = WavePINN.create(
         embedding=emb,
         arch_name=arch,
@@ -74,53 +136,64 @@ for arch, emb in setups:
         key=net_key,
     )
 
-    params, static = eqx.partition(pinn.model, filter_spec=eqx.is_array)
-    learning_rate = optax.schedules.exponential_decay(1e-3, 1000, 0.9)
+    # Extract the trainable parameters of the neural-net as a `PyTree`
+    params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
+
+    # Initialize the adam optimizer with learning rate scheduler
+    learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
     optimizer = optax.adam(learning_rate)
-    opt_state = optimizer.init(params)
+    opt_state = optimizer.init(params)  # Running state of the optimizer
+
+    #
+    # Define a single training step. JIT wrapper ensures fast runtime.
+    #
 
     @eqx.filter_jit
     def train_step(model, params, opt_state, weights, batch):
-        (total, seperate), grads = jax.value_and_grad(loss_fn, has_aux=True)(
+        (total, seperate), grads = jax.value_and_grad(
+            compute_weighted_loss, has_aux=True
+        )(
             params,
             model=model,
             weights=weights,
             batch=batch,
-            losses=loss_dict,
+            losses=losses,
         )
 
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         return params, opt_state, (total, seperate)
 
-    total_steps = 8000
-    for step, data_points, pde_points in tqdm(
+    #
+    # Training loop
+    #
+
+    total_steps = int(80e3)
+    for step, data_batch, pde_batch in tqdm(
         zip(range(total_steps), infinite_dataloader, infinite_point_generator),
         total=total_steps,
     ):
-        batch = {"data": data_points, "pde": pde_points}
+        # The batch dictionary should have the same structure as `losses`
+        batch = {"data": data_batch, "pde": pde_batch}
 
-        if step % update_weights_every == 0:
-            new_weights = compute_weights(params, pinn, batch, loss_dict)
-            weight_dict = update_weights(0.9, weight_dict, new_weights)
-
-        params, opt_state, loss = train_step(
-            pinn, params, opt_state, weight_dict, batch
+        # Do step
+        params, opt_state, (loss, individual_losses) = train_step(
+            pinn, params, opt_state, loss_weights, batch
         )
 
-    # ~~ Plot ~~
-    X, Y = data.coordinate_arrays
-    x, y = (X.ravel(), Y.ravel())
+        # Update adaptive weights
+        if step % update_weights_every == 0:
+            new_weights = compute_weights(params, pinn, batch, losses)
+            loss_weights = update_weights(0.9, loss_weights, new_weights)
 
-    # Evaluate on the grid of the original full data
-    pressure = pinn.pressure_pred_fn(params, x, y)
-    pressure = pressure.reshape(data.vals.shape)
+        # Write to logger
+        if step % log_every == 0:
+            logger.log_scalar("loss/total", loss, step)
 
-    plt.figure(figsize=(6, 5))
-    plt.imshow(pressure.T, origin="lower", extent=(-1, 1, -1, 1), cmap="viridis")
-    plt.colorbar(label="Pressure")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.savefig(f"{arch}_{emb}.png")
-    print(f"saved: {arch}_{emb}.png")
-    plt.show()
+            for term, weight in loss_weights.items():
+                logger.log_scalar(f"weight/{term}", weight, step)
+
+            for term, loss in individual_losses.items():
+                logger.log_scalar(f"loss/{term}", loss / loss_weights.get(term), step)
+
+            logger.log_plot("plots/pred", plot_pred, (params, pinn), step)
