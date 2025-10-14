@@ -40,12 +40,46 @@ def pde_loss(
     n_dim = len(coords)
 
     # vectorize and parallelize
+    batched_r_net = jax.vmap(model.r_net, in_axes=(None, *[0] * n_dim))
+    parallel_r_net = jax.pmap(batched_r_net, in_axes=(None, *[0] * n_dim))
+
+    # make prediction
+    pred = parallel_r_net(params, *coords)
+    return criterion(pred, 0.0)  # error measure
+
+
+def impedance_loss(
+    params: PyTree,
+    model: WavePINN,
+    impedance_params: PyTree,
+    impedance_model: Callable,  # callable pytree
+    coords: tuple[Array],
+    normals: tuple[Array],
+    criterion: Callable = criteria["mse"],
+) -> float:
+    # I have separate models for the impedance and the sound field
+    # In the ...
+
+    # the pressure at the boundary surely will give me the waveform??
+
+    n_dim = len(coords)
+
+    # vectorize and parallelize
     batched_p_net = jax.vmap(model.r_net, in_axes=(None, *[0] * n_dim))
     parallel_p_net = jax.pmap(batched_p_net, in_axes=(None, *[0] * n_dim))
 
-    # make prediction
-    pred = parallel_p_net(params, *coords)
-    return criterion(pred, 0.0)  # error measure
+    batched_vn_net = jax.vmap(model.vn_net, in_axes=(None, *[0] * n_dim * 2))
+    parallel_vn_net = jax.pmap(batched_vn_net, in_axes=(None, *[0] * n_dim * 2))
+
+    # make pinn prediction
+    p_pred = parallel_p_net(params, *coords)
+    vn_pred = parallel_vn_net(params, *coords, *normals)
+    pred = p_pred / vn_pred
+
+    # impedance model prediction
+    impedance_model_pred = ...
+
+    return criterion(pred, impedance_model_pred)  # error measure
 
 
 def compute_loss(
@@ -83,26 +117,27 @@ def compute_weighted_loss(
 
 @filter_jit
 def compute_weights(
-    params: PyTree,
-    model: WavePINN,
-    batch: dict[str, tuple[Array]],
+    params,
+    model,
+    batch: dict[str, tuple],
     losses: dict[str, Callable],
-    criterion: Callable = criteria["mse"],
-) -> dict[str, Array]:
+    criterion=criteria["mse"],
+):
     """Compute grad-norm-based weights for each loss in `losses` dict."""
-
-    # compute gradient norms from each loss term
+    # Compute gradient norms for each loss term
     grad_norms = {}
     for term, loss_fn in losses.items():
         grads = jax.jacrev(loss_fn)(params, model, batch[term], criterion)
         flat_grads = jax.tree.leaves(grads)[0].ravel()
         grad_norms[term] = jnp.linalg.norm(flat_grads)
 
-    # aggregate all terms via mean
-    mean_grad_norm = jnp.mean(jnp.stack(jax.tree.leaves(grad_norms)))
+    grad_norm_values = jnp.stack(list(grad_norms.values()))
 
-    # compute weights by mean/this (map to dict)
-    weights = jax.tree.map(lambda this: (mean_grad_norm / this), grad_norms)
+    # Compute mean grad norm
+    mean_grad_norm = jnp.mean(grad_norm_values)
+
+    # Compute weights
+    weights = jax.tree.map(lambda x: (mean_grad_norm / x), grad_norms)
 
     return weights
 
