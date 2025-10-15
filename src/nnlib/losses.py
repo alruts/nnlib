@@ -128,7 +128,7 @@ def compute_weights(
     grad_norms = {}
     for term, loss_fn in losses.items():
         grads = jax.jacrev(loss_fn)(params, model, batch[term], criterion)
-        flat_grads = jax.tree.leaves(grads)[0].ravel()
+        flat_grads = jnp.concatenate([g.ravel() for g in jax.tree.leaves(grads)])
         grad_norms[term] = jnp.linalg.norm(flat_grads)
 
     grad_norm_values = jnp.stack(list(grad_norms.values()))
