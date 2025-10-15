@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Optional
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -61,21 +61,68 @@ def reparametrize_linear(
     return new_layer
 
 
-def siren_weight_dist(shape, omega_0, *, is_first=False, key: PRNGKeyArray) -> Array:
-    """SIREN initialization distribution for weights."""
+def siren_weight_dist(
+    shape: tuple[int, int],
+    omega_0: float,
+    *,
+    is_first: bool = False,
+    key: PRNGKeyArray,
+    dtype: Optional[jnp.dtype] = None,
+) -> jnp.ndarray:
+    """SIREN initialization distribution for weights.
+
+    Args:
+        shape: (out_features, in_features)
+        omega_0: frequency scaling parameter
+        is_first: whether this is the first layer
+        key: JAX PRNG key
+        dtype: optional JAX dtype (if complex, initializes complex weights)
+    """
     out_features, in_features = shape
 
     if is_first:
         lim = 1.0 / in_features
     else:
         lim = jnp.sqrt(6.0 / in_features) / omega_0
-    return jrandom.uniform(key, (out_features, in_features), minval=-lim, maxval=lim)
+
+    weights = jrandom.uniform(key, (out_features, in_features), minval=-lim, maxval=lim)
+
+    # handle complex-valued case
+    if dtype is not None and jnp.issubdtype(dtype, jnp.complexfloating):
+        lim /= jnp.sqrt(2.0)  # half the variance
+        re_key, im_key = jrandom.split(key)
+
+        re_weights = jrandom.uniform(
+            re_key, (out_features, in_features), minval=-lim, maxval=lim
+        )
+        im_weights = jrandom.uniform(
+            im_key, (out_features, in_features), minval=-lim, maxval=lim
+        )
+        weights = re_weights + 1j * im_weights
+
+    return weights
 
 
-def siren_bias_dist(shape, *, is_first=False, key: PRNGKeyArray) -> Array:
+def siren_bias_dist(
+    shape: tuple[int],
+    *,
+    is_first: bool = False,
+    key: PRNGKeyArray,
+    dtype: Optional[jnp.dtype] = None,
+) -> Array:
     """SIREN initialization distribution for biases."""
     if is_first:
-        lim = 1
-        return jrandom.uniform(key, shape, minval=-lim, maxval=lim)
+        lim = 1.0
+        biases = jrandom.uniform(key, shape, minval=-lim, maxval=lim)
     else:
-        return jnp.zeros(shape)
+        biases = jnp.zeros(shape, dtype)
+
+    # handle complex-valued case
+    if dtype is not None and jnp.issubdtype(dtype, jnp.complexfloating):
+        lim = 1.0
+        re_key, im_key = jrandom.split(key)
+        re_biases = jrandom.uniform(re_key, shape, minval=-lim, maxval=lim)
+        im_biases = jrandom.uniform(im_key, shape, minval=-lim, maxval=lim)
+        biases = re_biases + 1j * im_biases
+
+    return biases
