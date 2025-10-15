@@ -23,7 +23,7 @@ arch_lib = {
 }
 
 
-class BasePINN(eqx.Module):
+class WavePINN(eqx.Module):
     """
     PINN for the acoustic wave equation with optional input embeddings.
 
@@ -82,31 +82,83 @@ class BasePINN(eqx.Module):
 
     def r_net(self, params, *args):
         """Computation of PDE residual for variable spatial dimensions."""
-        raise NotImplementedError("Should be implemented by children")
 
-    def _batch_vmap(self, pred_fn, params, *coords):
-        """
-        Vectorized mapping over all points in coords.
-        coords: tuple of arrays of shape (batch, ...) or (grid_dim, ...)
-        """
-        # Determine which axes to map over: assume last axis is batch/grid
-        n_coords = len(coords)
-        # `params` not mapped, `coords` mapped over axis 0
-        in_axes = (None,) + (0,) * n_coords
-        return vmap(pred_fn, in_axes=in_axes)(params, *coords)
+        def p_fn(*coords):
+            return self.p_net(params, *coords)
 
-    def pressure_pred_fn(self, params, *coords):
-        """Predict pressure over a grid of any spatial dimension."""
-        return self._batch_vmap(self.p_net, params, *coords)
+        # Stack inputs along a new axis
+        inputs = jnp.stack(args)
+
+        # Hessian: second derivatives w.r.t. all coordinates
+        hess_p = jax.jacrev(lambda x: jax.jacrev(p_fn)(*x))(inputs)
+        diag_hess = jnp.diag(hess_p)
+
+        # Assume spatial first, then time
+        laplacian = jnp.sum(diag_hess[:-1])
+        p_tt = diag_hess[-1]
+
+        return p_tt - (1.0 / self.wave_speed**2) * laplacian
 
 
-class WavePINN(BasePINN):
+class HelmholtzPINN(eqx.Module):
     """
     PINN for the acoustic wave equation with optional input embeddings.
 
     Models pressure fields, PDE residuals, and derived quantities
     (velocity, impedance) with support for batched grid predictions.
     """
+
+    model: eqx.Module
+    embedding: PeriodicFeatures | RandomFourierFeatures | eqx.nn.Identity
+    frequency: float
+    wave_speed: float = default_wave_speed()
+    medium_density: float = default_medium_density()
+
+    @classmethod
+    def create(
+        cls,
+        arch_name: Literal[
+            "modified_mlp", "mlp", "pirate_net", "siren", "modified_siren"
+        ],
+        embedding: PeriodicFeatures | RandomFourierFeatures | eqx.nn.Identity,
+        frequency: float,
+        wave_speed: float | None = None,
+        medium_density: float | None = None,
+        **arch_kwargs,
+    ):
+        model_cls = arch_lib[arch_name]
+
+        match embedding:
+            case PeriodicFeatures():
+                arch_kwargs["in_size"] *= 2
+            case RandomFourierFeatures():
+                arch_kwargs["in_size"] = embedding.embed_dim
+            case eqx.nn.Identity():
+                pass
+            case _:
+                raise ValueError(f"Unsupported embedding: {embedding}")
+
+        model = model_cls(**arch_kwargs)
+
+        # defaults
+        wave_speed = wave_speed if wave_speed is not None else default_wave_speed()
+        medium_density = (
+            medium_density if medium_density is not None else default_medium_density()
+        )
+
+        return cls(
+            model=model,
+            embedding=embedding,
+            frequency=frequency,
+            wave_speed=wave_speed,
+            medium_density=medium_density,
+        )
+
+    def p_net(self, params, *args):
+        """Forward computation of pressure"""
+        # apply embeddings
+        input_arr = lift_to_args(self.embedding)(*args)
+        return apply_model(self.model, params, input_arr)
 
     def r_net(self, params, *args):
         """Computation of PDE residual for variable spatial dimensions."""
@@ -122,34 +174,6 @@ class WavePINN(BasePINN):
         diag_hess = jnp.diag(hess_p)
 
         # Assume spatial first, then time
-        laplacian = jnp.sum(diag_hess[:-1])
-        p_tt = diag_hess[-1]
-        residual = p_tt - (self.wave_speed**2) * laplacian
-
-class HelmholtzPINN(BasePINN):
-    """
-    PINN for the acoustic wave equation with optional input embeddings.
-
-    Models pressure fields, PDE residuals, and derived quantities
-    (velocity, impedance) with support for batched grid predictions.
-    """
-
-    def r_net(self, params, *args):
-        """Computation of PDE residual for variable spatial dimensions."""
-
-        def p_fn(*coords):
-            return self.p_net(params, *coords)
-
-        # Stack inputs along a new axis
-        inputs = jnp.stack(args)
-
-        # Hessian: second derivatives w.r.t. all coordinates
-        hess_p = jax.jacrev(lambda x: jax.jacrev(p_fn)(*x))(inputs)
-        diag_hess = jnp.diag(hess_p)
-
-        # Assume spatial first, then time
-        laplacian = jnp.sum(diag_hess[:-1])
-        p_tt = diag_hess[-1]
-        residual = p_tt - (self.wave_speed**2) * laplacian
-
-        return residual       return residual
+        laplacian = jnp.sum(diag_hess)
+        k = (2 * jnp.pi * self.frequency) / self.wave_speed
+        return laplacian + (k**2) * p_fn(*args)
