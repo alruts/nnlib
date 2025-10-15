@@ -14,7 +14,7 @@ from nnlib import feature_maps
 from nnlib.data_utils import (
     DataPointSampler,
     UniformSampler,
-    full_data,
+    random_sample,
 )
 from nnlib.data_utils.data_structures import GridDiscretisationND
 from nnlib.logger import TensorboardLogger
@@ -25,6 +25,7 @@ from nnlib.losses import (
     pde_loss,
     update_weights,
 )
+from nnlib.misc import grid_vmap
 from nnlib.pinn import WavePINN
 
 # load data structure from .pkl file
@@ -35,15 +36,16 @@ with open(data_path, "rb") as f:
 seed_key = jrandom.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 
-breakpoint()
 #
 # Construct infinite data generators for PDE collocation points
 # and to load random batches of data points
 #
 
 dataset = DataPointSampler(
-    point_cloud=full_data(data),  # returns `PointCloud`
-    batch_size=128,
+    point_cloud=random_sample(
+        data, num_points=1024, key=subsample_key
+    ),  # returns `PointCloud` with random samples
+    batch_size=32,
     key=data_key,
 )
 
@@ -55,7 +57,7 @@ infinite_point_generator = iter(domain_sampler)
 
 # Random Fourier features for input coordinates helps with low-frequency bias
 rff_emb = feature_maps.RandomFourierFeatures(
-    embed_scale=20.0, embed_dim=32, in_dim=2, key=emb_key
+    embed_scale=1.0, embed_dim=16, in_dim=2, key=emb_key
 )
 id_emb = eqx.nn.Identity()  # simply does nothing
 
@@ -87,18 +89,16 @@ loss_weights = {key: jnp.array(1.0) for key in losses.keys()}
 
 # Helper to make predictions for logging
 @eqx.filter_jit
-def compute_pressure(params, pinn, data):
+def compute_pressure(params, pinn):
     X, Y = data.coordinate_arrays
-    x, y = X.ravel(), Y.ravel()
-    pressure = pinn.pressure_pred_fn(params, x, y)
-    return pressure.reshape(data.vals.shape)
+    return grid_vmap(pinn.p_net, (0, 1, 1))(params, X, Y)
 
 
 # Helper to make plots for logging
 def plot_pred(pressure):
     fig = plt.figure(figsize=(6, 5))
     plt.imshow(
-        pressure.T,
+        pressure,
         origin="lower",
         extent=(*data.bounds[0], *data.bounds[1]),
         cmap="jet",
@@ -115,9 +115,7 @@ def plot_pred(pressure):
 
 for arch, emb in setup:
     # initialize logger
-    logger = TensorboardLogger(
-        experiment_name=f"gaussian-{datetime.now().strftime('%Y_%m_%d-%H_%M_%S')}"
-    )
+    logger = TensorboardLogger(experiment_name=f"test-run_{arch}")
     log_every = 1000
 
     # build PINN
@@ -126,7 +124,7 @@ for arch, emb in setup:
         arch_name=arch,
         in_size=2,
         out_size="scalar",
-        width_size=16,
+        width_size=32,
         depth=3,
         key=net_key,
     )
@@ -193,8 +191,8 @@ for arch, emb in setup:
                 logger.log_scalar(f"loss/{term}", loss / loss_weights.get(term), step)
 
             # make a prediction
-            pred = pressure = compute_pressure(params, pinn, data.coordinate_arrays)
+            pred = compute_pressure(params, pinn)
             pred_error = jnp.mean(jnp.square(data.vals - pred))
 
             logger.log_scalar("error/mse", pred_error, step)
-            logger.log_plot("plots/pred", plot_pred, (params, pinn), step)
+            logger.log_plot("plots/pred", plot_pred, pred, step)
