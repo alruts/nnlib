@@ -1,9 +1,10 @@
 from functools import wraps
-from typing import Callable
+from typing import Callable, Sequence
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from matplotlib import axes
 
 _default_constants = {
     "wave_speed": 343.20,
@@ -71,3 +72,38 @@ def get_parameters(model):
     """Returns the parameters of the model."""
     params, _ = eqx.partition(model, eqx.is_array)
     return params
+
+
+def nested_vmap(fn: Callable, in_axes_list: list[tuple], out_axes_list=None):
+    for i, in_axes in enumerate(reversed(in_axes_list)):
+        out_axes = None
+        if out_axes_list is not None:
+            out_axes = out_axes_list[-(i + 1)]
+        fn = jax.vmap(fn, in_axes=in_axes, out_axes=out_axes)
+    return fn
+
+
+def grid_vmap(fn: Callable, axis_mask: Sequence[bool | int]):
+    """
+    Lift a function that takes single values into grid
+
+    Example:
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>>
+        >>> f = lambda static, x, y, t: x + y + t
+        >>>
+        >>> x = jnp.linspace(0, 1, 3)
+        >>> (X, Y), t = jnp.meshgrid(x, x, indexing="ij"), 1.0
+        >>> grid_f = grid_vmap(f, [0, 1, 1, 0])
+        >>> print(grid_f(..., X, Y, t))
+        [[1.  1.5 2. ]
+         [1.5 2.  2.5]
+         [2.  2.5 3. ]]
+    """
+    fst = tuple(1 if x else None for x in axis_mask)
+    snd = tuple(0 if x else None for x in axis_mask)
+
+    in_axes_list = [fst, snd]
+    out_axes_list = [0 for _ in range(len(in_axes_list))]
+    return nested_vmap(fn, in_axes_list, out_axes_list)
