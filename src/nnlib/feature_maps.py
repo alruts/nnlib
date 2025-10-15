@@ -6,6 +6,22 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 
+class Identity(eqx.Module):
+    """Identity function that simply returns inputs unchanged.
+
+    Example:
+        >>> import jax.numpy as jnp
+        >>> import equinox as eqx
+        >>> transform = Identity()
+        >>> x = jnp.array([0.0])
+        >>> transform(x)
+        Array([0.], dtype=float32)
+    """
+
+    def __call__(self, x):
+        return x
+
+
 class PeriodicFeatures(eqx.Module):
     """Periodic embeddings with per-axis trainable periods applied to all inputs.
 
