@@ -21,7 +21,7 @@ class PointCloud(NamedTuple):
     vals: Float[Array, "n_points"]
 
 
-class SpatialDiscretisationND(eqx.Module):
+class GridDiscretisationND(eqx.Module):
     bounds: Sequence[tuple[float, float]] = eqx.field(static=True)
     vals: Float[Array, "n_points ..."]  # noqa: F722
 
@@ -36,7 +36,7 @@ class SpatialDiscretisationND(eqx.Module):
         Discretise a function over a regular grid.
 
         >>> def f(x): return x[0] + x[1]
-        >>> data = SpatialDiscretisationND.discretise_fn(bounds=[(0,1),(0,1)], n_points=[2,2], fn=f)
+        >>> data = GridDiscretisationND.discretise_fn(bounds=[(0,1),(0,1)], n_points=[2,2], fn=f)
         >>> data.vals.shape
         (2, 2)
         >>> data.bounds
@@ -60,7 +60,7 @@ class SpatialDiscretisationND(eqx.Module):
     @property
     def n_points(self):
         """
-        >>> data = SpatialDiscretisationND.discretise_fn(bounds=[(0,1)], n_points=[5], fn=lambda x: x[0])
+        >>> data = GridDiscretisationND.discretise_fn(bounds=[(0,1)], n_points=[5], fn=lambda x: x[0])
         >>> data.n_points
         5
         """
@@ -69,7 +69,7 @@ class SpatialDiscretisationND(eqx.Module):
     @property
     def ndim(self):
         """
-        >>> data = SpatialDiscretisationND.discretise_fn(bounds=[(0,1),(0,2)], n_points=[2,3], fn=lambda x: x[0]+x[1])
+        >>> data = GridDiscretisationND.discretise_fn(bounds=[(0,1),(0,2)], n_points=[2,3], fn=lambda x: x[0]+x[1])
         >>> data.ndim
         2
         """
@@ -78,7 +78,7 @@ class SpatialDiscretisationND(eqx.Module):
     @property
     def dxs(self):
         """
-        >>> data = SpatialDiscretisationND.discretise_fn(bounds=[(0,1),(0,3)], n_points=[2,4], fn=lambda x: x[0]+x[1])
+        >>> data = GridDiscretisationND.discretise_fn(bounds=[(0,1),(0,3)], n_points=[2,4], fn=lambda x: x[0]+x[1])
         >>> list(map(float, data.dxs))
         [1.0, 1.0]
         """
@@ -95,13 +95,13 @@ class SpatialDiscretisationND(eqx.Module):
             jnp.linspace(start, end, num)
             for (start, end), num in zip(self.bounds, self.vals.shape)
         ]
-        return jnp.meshgrid(*axes, indexing="ij")
+        return tuple(jnp.meshgrid(*axes, indexing="ij"))
 
     def locate_closest(self, point: Point):
         """
         Locate the index of the closest grid point.
 
-        >>> data = SpatialDiscretisationND.discretise_fn(bounds=[(0,1),(0,1)], n_points=[2,2], fn=lambda x: x[0]+x[1])
+        >>> data = GridDiscretisationND.discretise_fn(bounds=[(0,1),(0,1)], n_points=[2,2], fn=lambda x: x[0]+x[1])
         >>> data.locate_closest(jnp.array([0.1, 0.9]))
         (Array(0, dtype=int32), Array(1, dtype=int32))
         """
@@ -110,11 +110,11 @@ class SpatialDiscretisationND(eqx.Module):
         return jnp.unravel_index(flat_idx, self.vals.shape)
 
     def binop(self, other, fn):
-        if isinstance(other, SpatialDiscretisationND):
+        if isinstance(other, GridDiscretisationND):
             if self.bounds != other.bounds or self.vals.shape != other.vals.shape:
                 raise ValueError("Mismatched spatial discretisations")
             other = other.vals
-        return SpatialDiscretisationND(self.bounds, fn(self.vals, other))
+        return GridDiscretisationND(self.bounds, fn(self.vals, other))
 
     def __add__(self, other):
         return self.binop(other, lambda x, y: x + y)

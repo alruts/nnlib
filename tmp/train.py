@@ -16,7 +16,7 @@ from nnlib.data_utils import (
     UniformSampler,
     full_data,
 )
-from nnlib.data_utils.data_structures import SpatialDiscretisationND
+from nnlib.data_utils.data_structures import GridDiscretisationND
 from nnlib.logger import TensorboardLogger
 from nnlib.losses import (
     compute_weighted_loss,
@@ -30,12 +30,12 @@ from nnlib.pinn import WavePINN
 # load data structure from .pkl file
 data_path = Path("./data/gt_data.pkl")
 with open(data_path, "rb") as f:
-    data: SpatialDiscretisationND = pickle.load(f)
+    data: GridDiscretisationND = pickle.load(f)
 
 seed_key = jrandom.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 
-
+breakpoint()
 #
 # Construct infinite data generators for PDE collocation points
 # and to load random batches of data points
@@ -60,17 +60,17 @@ rff_emb = feature_maps.RandomFourierFeatures(
 id_emb = eqx.nn.Identity()  # simply does nothing
 
 # Pairs of embeddings and architectures for loop
-arch_emb_pairs = (
-    ["siren", id_emb],
+setup = (
     ["mlp", rff_emb],
     ["modified_mlp", rff_emb],
     ["pirate_net", rff_emb],
+    ["siren", id_emb],
     ["modified_siren", id_emb],
 )
 
-
 #
 # Here we define which loss functions to use during training
+# The losses should be parallelized and vectorized via `pmap` and `vmap`
 #
 
 losses = {"data": data_loss, "pde": pde_loss}
@@ -78,17 +78,14 @@ update_weights_every = 100
 
 # Arbitrary loss terms can be added, single loss also works
 # losses = {"data": data_loss}
+# update_weights_every = jnp.inf # hack to avoid using adaptive weights
 
 # Initialize the weights for adaptive grad norm, these are updated after the first step
 # and every `update_weights_every` steps after that
 loss_weights = {key: jnp.array(1.0) for key in losses.keys()}
 
 
-#
-# # Plot function for to pass into logger
-#
-
-
+# Helper to make predictions for logging
 @eqx.filter_jit
 def compute_pressure(params, pinn, data):
     X, Y = data.coordinate_arrays
@@ -97,10 +94,8 @@ def compute_pressure(params, pinn, data):
     return pressure.reshape(data.vals.shape)
 
 
-def plot_pred(args):
-    params, pinn = args
-    pressure = compute_pressure(params, pinn, data)
-
+# Helper to make plots for logging
+def plot_pred(pressure):
     fig = plt.figure(figsize=(6, 5))
     plt.imshow(
         pressure.T,
@@ -115,10 +110,10 @@ def plot_pred(args):
 
 
 #
-# # Train the different architectures in a loop
+# Train the each setup in a loop
 #
 
-for arch, emb in arch_emb_pairs:
+for arch, emb in setup:
     # initialize logger
     logger = TensorboardLogger(
         experiment_name=f"gaussian-{datetime.now().strftime('%Y_%m_%d-%H_%M_%S')}"
@@ -131,7 +126,7 @@ for arch, emb in arch_emb_pairs:
         arch_name=arch,
         in_size=2,
         out_size="scalar",
-        width_size=64,
+        width_size=16,
         depth=3,
         key=net_key,
     )
@@ -145,7 +140,8 @@ for arch, emb in arch_emb_pairs:
     opt_state = optimizer.init(params)  # Running state of the optimizer
 
     #
-    # Define a single training step. JIT wrapper ensures fast runtime.
+    # Define a single training step, `filter_jit` compiles this code to
+    # machine-code
     #
 
     @eqx.filter_jit
@@ -165,10 +161,10 @@ for arch, emb in arch_emb_pairs:
         return params, opt_state, (total, seperate)
 
     #
-    # Training loop
+    # Training loop: all the optimization work is done here + logging
     #
 
-    total_steps = int(80e3)
+    total_steps = int(40e3)
     for step, data_batch, pde_batch in tqdm(
         zip(range(total_steps), infinite_dataloader, infinite_point_generator),
         total=total_steps,
@@ -196,4 +192,9 @@ for arch, emb in arch_emb_pairs:
             for term, loss in individual_losses.items():
                 logger.log_scalar(f"loss/{term}", loss / loss_weights.get(term), step)
 
+            # make a prediction
+            pred = pressure = compute_pressure(params, pinn, data.coordinate_arrays)
+            pred_error = jnp.mean(jnp.square(data.vals - pred))
+
+            logger.log_scalar("error/mse", pred_error, step)
             logger.log_plot("plots/pred", plot_pred, (params, pinn), step)

@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from jax.scipy.special import erf
 from matplotlib import pyplot as plt
 
-from nnlib.data_utils.data_structures import SpatialDiscretisationND
+from nnlib.data_utils.data_structures import GridDiscretisationND
 from nnlib.data_utils.subset import grid_sample, random_sample
 from nnlib.misc import default_wave_speed
 
@@ -33,11 +33,11 @@ def acoustic_point_source_1d(coord):
         erf((t_ret - t0) / (jnp.sqrt(2) * sigma)) - erf(-t0 / (jnp.sqrt(2) * sigma))
     )
 
-    return u
+    return u * 100
 
 
 # generate 'grid' data using acoustic point source function
-spatial_discretisation = SpatialDiscretisationND.discretise_fn(
+spatial_discretisation = GridDiscretisationND.discretise_fn(
     [(0.0, 1.0), (0.0, 1.0)], [256, 256], acoustic_point_source_1d
 )
 
@@ -45,7 +45,7 @@ spatial_discretisation = SpatialDiscretisationND.discretise_fn(
 save_path = Path("./data/gt_data.pkl")
 with open(save_path, "wb") as f:
     pickle.dump(spatial_discretisation, f)
-print(f"SpatialDiscretisationND object saved to {save_path}")
+print(f"GridDiscretisationND object saved to {save_path}")
 
 # To load it back later:
 with open(save_path, "rb") as f:
