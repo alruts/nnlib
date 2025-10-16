@@ -24,7 +24,7 @@ from nnlib.losses import (
     pde_loss,
     update_weights,
 )
-from nnlib.misc import grid_vmap
+from nnlib.misc import grid_map
 from nnlib.pinn import WavePINN
 
 # load data structure from .pkl file
@@ -56,7 +56,7 @@ infinite_point_generator = iter(domain_sampler)
 
 # Random Fourier features for input coordinates helps with low-frequency bias
 rff_emb = feature_maps.RandomFourierFeatures(
-    embed_scale=1.0, embed_dim=16, in_dim=2, key=emb_key
+    embed_scale=10.0, embed_dim=256, in_dim=2, key=emb_key
 )
 id_emb = eqx.nn.Identity()  # simply does nothing
 
@@ -89,20 +89,24 @@ loss_weights = {key: jnp.array(1.0) for key in losses.keys()}
 # Helper to make predictions for logging
 @eqx.filter_jit
 def compute_pressure(params, pinn):
-    X, Y = data.coordinate_arrays
-    return grid_vmap(pinn.p_net, (0, 1, 1))(params, X, Y)
+    """Evaluates pressure over the same grid as original dataset"""
+    X, T = data.coordinate_arrays
+
+    # Map p_net to accept mesh-grids for x and t
+    p = grid_map(pinn.p_net, axis_mask=(0, 1, 1))
+    return p(params, X, T)
 
 
 # Helper to make plots for logging
 def plot_pred(pressure):
     fig = plt.figure(figsize=(6, 5))
-    plt.imshow(
+    plt.pcolormesh(
+        *data.coordinate_arrays,
         pressure,
-        origin="lower",
-        extent=(*data.bounds[0], *data.bounds[1]),
+        shading="auto",
         cmap="jet",
     )
-    plt.colorbar(label="Scalar Value")
+    plt.colorbar(label="Pressure")
     plt.xlabel("x")
     plt.ylabel("t")
     return fig

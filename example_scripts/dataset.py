@@ -5,9 +5,34 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.special import erf
 from matplotlib import pyplot as plt
+from PIL import Image
 
 from nnlib.data_utils import GridDiscretisationND, subsample
 from nnlib.misc import default_wave_speed
+
+#
+# Load image and turn into `GridDiscretisationND` object. This places it in a
+# coordinate system, here we choose x, y in [-1, 1]
+#
+
+file = Path(
+    "./data/The-famous-Lena-image-often-used-as-an-example-in-image-processing.png"
+)
+img = Image.open(file)
+img = jnp.array(img)[:, :, 0]  # take first channel
+img = img / 255.0
+img = jnp.rot90(img, k=-1)
+
+# data structure to represent "grid" like data
+data = GridDiscretisationND(
+    [(-1.0, 1.0), (-1.0, 1.0)],
+    vals=img,
+)
+
+#
+# Evaluate a function over a regular grid, here we use a point source emitting
+# a Gaussian pulse on a domain with x, t in [0, 1] with 256 points per dimension.
+#
 
 c = default_wave_speed()
 
@@ -32,15 +57,18 @@ def acoustic_point_source_1d(coord):
         erf((t_ret - t0) / (jnp.sqrt(2) * sigma)) - erf(-t0 / (jnp.sqrt(2) * sigma))
     )
 
-    return u * 100
+    return u * 100  # avoid very small values
 
 
-# generate 'grid' data using acoustic point source function
+# generate dataset on a domain
 spatial_discretisation = GridDiscretisationND.discretise_fn(
     [(0.0, 1.0), (0.0, 1.0)], [256, 256], acoustic_point_source_1d
 )
 
-# Serialize the data object
+#
+# Serialization can be done by simply pickling datasets directly
+#
+
 save_path = Path("./data/gt_data.pkl")
 with open(save_path, "wb") as f:
     pickle.dump(spatial_discretisation, f)
@@ -49,6 +77,11 @@ print(f"GridDiscretisationND object saved to {save_path}")
 # To load it back later:
 with open(save_path, "rb") as f:
     spatial_discretisation = pickle.load(f)
+
+#
+# The datasets provide convenience functions for accessing coordinate arrays and
+# values for easy plotting / processing
+#
 
 # Plot using the grid
 plt.figure(figsize=(6, 5))
@@ -69,7 +102,12 @@ plt.tight_layout()
 
 plt.show()
 
-# ===
+#
+# Datasets can be converted into `PointCloud` objects, by subsampling them,
+# however this gets rid of any structure and now we just have an unordered set
+# of coordinates with corresponding data values.
+#
+
 key = jax.random.PRNGKey(0)
 
 # Sample random points
@@ -97,10 +135,8 @@ plt.title(f"Random {num_points} Sampled Points")
 plt.axis("equal")
 plt.show()
 
-# Grid
-num_points = (100, 100)
-# Sample random points
-subset = grid_sample(spatial_discretisation, num_points)
+# Sample in regular intervals
+subset = subsample.grid_sample(spatial_discretisation, num_indices_per_dim=(100, 100))
 
 # Extract coordinates and values
 coords = subset.coords
