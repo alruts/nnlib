@@ -1,5 +1,5 @@
 from functools import wraps
-from typing import Callable, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 import equinox as eqx
 import jax
@@ -74,36 +74,53 @@ def get_parameters(model):
     return params
 
 
-def nested_vmap(fn: Callable, in_axes_list: list[tuple], out_axes_list=None):
-    for i, in_axes in enumerate(reversed(in_axes_list)):
-        out_axes = None
-        if out_axes_list is not None:
-            out_axes = out_axes_list[-(i + 1)]
-        fn = jax.vmap(fn, in_axes=in_axes, out_axes=out_axes)
-    return fn
-
-
-def grid_vmap(fn: Callable, axis_mask: Sequence[bool | int]):
+def grid_map(fn: Callable, axis_mask: Sequence[bool | int]):
     """
-    Lift a function that takes single values into grid
+    Return a vectorized version of a function that maps over meshgrid arrays
+    while keeping some arguments static.
+
+    Args:
+        fn: function taking separate arguments (x, y, z, ...)
+        axis_mask: sequence of bools, one per argument.
+                   True  -> argument is mapped (batched)
+                   False -> argument is static (not batched)
+
+    Returns:
+        A new function that can be called like fn(X, Y, Z, ...) with meshgrids.
 
     Example:
-        >>> import jax
-        >>> import jax.numpy as jnp
-        >>>
-        >>> f = lambda static, x, y, t: x + y + t
-        >>>
-        >>> x = jnp.linspace(0, 1, 3)
-        >>> (X, Y), t = jnp.meshgrid(x, x, indexing="ij"), 1.0
-        >>> grid_f = grid_vmap(f, [0, 1, 1, 0])
-        >>> print(grid_f(..., X, Y, t))
-        [[1.  1.5 2. ]
-         [1.5 2.  2.5]
-         [2.  2.5 3. ]]
+    >>> x = jnp.array([0, 1])
+    >>> y = jnp.array([10, 20])
+    >>> X, Y = jnp.meshgrid(x, y, indexing='ij')
+    >>> f = lambda x, y, t: x + y + t
+    >>> grid_f = grid_map(f, [1, 1, 0])
+    >>> grid_f(X, Y, 1)
+    Array([[11, 21],
+           [12, 22]], dtype=int32)
     """
-    fst = tuple(1 if x else None for x in axis_mask)
-    snd = tuple(0 if x else None for x in axis_mask)
 
-    in_axes_list = [fst, snd]
-    out_axes_list = [0 for _ in range(len(in_axes_list))]
-    return nested_vmap(fn, in_axes_list, out_axes_list)
+    def mapped_fn(*args):
+        if len(axis_mask) != len(args):
+            raise ValueError("`axis_mask` must have same length as args")
+
+        mapped_args = [a.ravel() for a, m in zip(args, axis_mask) if m]
+        static_args = [a for a, m in zip(args, axis_mask) if not m]
+
+        def wrapper(*mapped_vals):
+            out_args = []
+            mapped_idx = 0
+            static_idx = 0
+            for m in axis_mask:
+                if m:
+                    out_args.append(mapped_vals[mapped_idx])
+                    mapped_idx += 1
+                else:
+                    out_args.append(static_args[static_idx])
+                    static_idx += 1
+            return fn(*out_args)
+
+        vals_flat = jax.vmap(wrapper)(*mapped_args)
+        grid_shape = next(a.shape for a, m in zip(args, axis_mask) if m)
+        return vals_flat.reshape(grid_shape)
+
+    return mapped_fn
