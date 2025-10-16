@@ -6,8 +6,7 @@ import jax.numpy as jnp
 from jax.scipy.special import erf
 from matplotlib import pyplot as plt
 
-from nnlib.data_utils.data_structures import GridDiscretisationND
-from nnlib.data_utils.subset import grid_sample, random_sample
+from nnlib.data_utils import GridDiscretisationND, subsample
 from nnlib.misc import default_wave_speed
 
 c = default_wave_speed()
@@ -75,7 +74,7 @@ key = jax.random.PRNGKey(0)
 
 # Sample random points
 num_points = 20_000
-subset = random_sample(spatial_discretisation, num_points=num_points, key=key)
+subset = subsample.random_sample(spatial_discretisation, num_points=num_points, key=key)
 
 # Extract coordinates and values
 coords = subset.coords

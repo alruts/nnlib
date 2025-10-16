@@ -4,7 +4,7 @@ from .data_structures import (
     UnstructuredDiscretisationND,
 )
 from .sampling import DataPointSampler, MeshSampler, UniformSampler
-from .subset import full_data, grid_sample, random_sample
+from .subsample import full_data, grid_sample, random_sample
 
 __all__ = [
     "PointCloud",

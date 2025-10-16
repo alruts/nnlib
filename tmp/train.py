@@ -1,5 +1,4 @@
 import pickle
-from datetime import datetime
 from pathlib import Path
 
 import equinox as eqx
@@ -14,7 +13,7 @@ from nnlib import feature_maps
 from nnlib.data_utils import (
     DataPointSampler,
     UniformSampler,
-    random_sample,
+    subsample,
 )
 from nnlib.data_utils.data_structures import GridDiscretisationND
 from nnlib.logger import TensorboardLogger
@@ -42,7 +41,7 @@ data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 #
 
 dataset = DataPointSampler(
-    point_cloud=random_sample(
+    point_cloud=subsample.random_sample(
         data, num_points=1024, key=subsample_key
     ),  # returns `PointCloud` with random samples
     batch_size=32,
