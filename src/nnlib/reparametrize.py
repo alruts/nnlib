@@ -126,3 +126,27 @@ def siren_bias_dist(
         biases = re_biases + 1j * im_biases
 
     return biases
+
+
+def is_nd_array(x: Array, *, n: int) -> bool:
+    """
+    Check if `x` is a 2D array suitable as a neural network weight matrix.
+
+    A valid weight matrix is typically a 2D array of shape (out_features, in_features).
+
+    Example
+        >>> # Linear layer weights with shape (3, 4)
+        >>> W = jnp.array([[0.1, 0.2, 0.3, 0.4],
+        ...                [0.5, 0.6, 0.7, 0.8],
+        ...                [0.9, 1.0, 1.1, 1.2]])
+        >>> is_nd_array(W, n=2)
+        True
+
+        >>> # Bias vector (1D) should return False
+        >>> b = jnp.array([0.1, 0.2, 0.3])
+        >>> is_nd_array(b, n=2)
+        False
+        >>> is_nd_array(b, n=1)
+        True
+    """
+    return eqx.is_array(x) and len(x.shape) == n
