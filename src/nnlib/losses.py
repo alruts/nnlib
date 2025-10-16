@@ -12,10 +12,10 @@ criteria = {
     "mae": lambda x, y, axis=None: jnp.mean(jnp.abs(x - y), axis=axis),
     "split_mse": lambda x, y, axis=None: jnp.mean(
         (x.real - y.real) ** 2 + (x.imag - y.imag) ** 2, axis=axis
-    ),
+    ).real,
     "split_mae": lambda x, y, axis=None: jnp.mean(
         jnp.abs(x.real - y.real) + jnp.abs(x.imag - y.imag), axis=axis
-    ),
+    ).real,
 }
 
 
@@ -103,6 +103,22 @@ def compute_loss(
     }
     total_loss = jax.tree.reduce(lambda x, y: x + y, computed_losses)
     return total_loss, computed_losses
+
+
+def make_loss(data_loss: Callable, criterion: Callable):
+    """
+    Returns a new loss function with the given criterion partially applied
+    to the provided data_loss function.
+
+    Usage:
+        loss_fn = make_loss(data_loss, criteria["mse"])
+        value = loss_fn(params, model, coords_vals)
+    """
+
+    def loss_fn(params: PyTree, model, coords_vals: tuple[Array]) -> float:
+        return data_loss(params, model, coords_vals, criterion=criterion)
+
+    return loss_fn
 
 
 def compute_weighted_loss(

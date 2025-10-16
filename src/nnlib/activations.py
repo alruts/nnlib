@@ -26,5 +26,9 @@ def sin_activation(x: Array, angular_frequency: float) -> Array:
     return jnp.sin(angular_frequency * x)
 
 
+def split_sin_activation(z: Complex, angular_frequency: float) -> Array:
+    return split_activation(lambda x: sin_activation(x, angular_frequency))(z)
+
+
 def identity_activation(x: Array) -> Array:
     return x

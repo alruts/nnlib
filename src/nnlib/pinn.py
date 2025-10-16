@@ -170,7 +170,9 @@ class HelmholtzPINN(eqx.Module):
         inputs = jnp.stack(args)
 
         # Hessian: second derivatives w.r.t. all coordinates
-        hess_p = jax.jacrev(lambda x: jax.jacrev(p_fn)(*x))(inputs)
+        hess_p = jax.jacrev(
+            lambda x: jax.jacrev(p_fn, holomorphic=True)(*x), holomorphic=True
+        )(inputs)
         diag_hess = jnp.diag(hess_p)
 
         # Assume spatial first, then time
