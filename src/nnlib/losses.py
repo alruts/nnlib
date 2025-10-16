@@ -8,8 +8,14 @@ from jaxtyping import Array, PyTree
 from nnlib.pinn import WavePINN
 
 criteria = {
-    "mse": lambda x, y, axis=None: jnp.mean((x - y) ** 2, axis),
-    "mae": lambda x, y, axis=None: jnp.mean(jnp.abs(x - y), axis),
+    "mse": lambda x, y, axis=None: jnp.mean((x - y) ** 2, axis=axis),
+    "mae": lambda x, y, axis=None: jnp.mean(jnp.abs(x - y), axis=axis),
+    "split_mse": lambda x, y, axis=None: jnp.mean(
+        (x.real - y.real) ** 2 + (x.imag - y.imag) ** 2, axis=axis
+    ),
+    "split_mae": lambda x, y, axis=None: jnp.mean(
+        jnp.abs(x.real - y.real) + jnp.abs(x.imag - y.imag), axis=axis
+    ),
 }
 
 
