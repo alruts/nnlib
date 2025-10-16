@@ -126,7 +126,7 @@ sc = plt.scatter(
     c=vals,  # values mapped to color
     cmap="jet",
     s=1,  # marker size
-    edgecolor="none",  # optional: black edge around points
+    edgecolor="none",
 )
 plt.colorbar(sc, label="Value")
 plt.xlabel("x")

@@ -1,4 +1,4 @@
-import pickle
+import warnings
 from pathlib import Path
 
 import equinox as eqx
@@ -10,6 +10,7 @@ from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 from nnlib import feature_maps
+from nnlib.activations import cardioid, split_sin_activation
 from nnlib.data_utils import (
     DataPointSampler,
     UniformSampler,
@@ -20,18 +21,16 @@ from nnlib.logger import TensorboardLogger
 from nnlib.losses import (
     compute_weighted_loss,
     compute_weights,
+    criteria,
     data_loss,
+    make_loss,
     pde_loss,
     update_weights,
 )
-from nnlib.misc import grid_map
-from nnlib.pinn import WavePINN
+from nnlib.misc import default_wave_speed, grid_map
+from nnlib.pinn import HelmholtzPINN
 
-# load data structure from .pkl file
-data_path = Path("./data/gt_data.pkl")
-with open(data_path, "rb") as f:
-    data: GridDiscretisationND = pickle.load(f)
-
+warnings.filterwarnings("error")
 seed_key = jrandom.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 
@@ -40,9 +39,26 @@ data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 # and to load random batches of data points
 #
 
+FREQUENCY = 440
+
+
+def point_source(x, x0=jnp.array([0.0, 0.0]), f=FREQUENCY):
+    r, r0 = jnp.linalg.norm(x), jnp.linalg.norm(x0)
+    R = jnp.abs(r - r0)
+    k = (2 * jnp.pi * f) / default_wave_speed()
+    return jnp.exp(-1j * k * R) / R
+
+
+data = GridDiscretisationND.discretise_fn(
+    [(-0.1, 0.1), (-0.1, 0.1)], n_points=[256, 256], fn=point_source
+)
+
+
 dataset = DataPointSampler(
     point_cloud=subsample.random_sample(
-        data, num_points=1024, key=subsample_key
+        data,
+        num_points=int(data.n_points * 0.01),  # take 1% of data
+        key=subsample_key,
     ),  # returns `PointCloud` with random samples
     batch_size=32,
     key=data_key,
@@ -102,7 +118,7 @@ def plot_pred(pressure):
     fig = plt.figure(figsize=(6, 5))
     plt.pcolormesh(
         *data.coordinate_arrays,
-        pressure,
+        pressure.real,
         shading="auto",
         cmap="jet",
     )
@@ -122,14 +138,17 @@ for arch, emb in setup:
     log_every = 1000
 
     # build PINN
-    pinn = WavePINN.create(
+    pinn = HelmholtzPINN.create(
         embedding=emb,
         arch_name=arch,
+        frequency=FREQUENCY,
         in_size=2,
         out_size="scalar",
         width_size=32,
         depth=3,
         key=net_key,
+        dtype=jnp.complex64,
+        # activation=split_sin_activation,
     )
 
     # Extract the trainable parameters of the neural-net as a `PyTree`
@@ -147,19 +166,20 @@ for arch, emb in setup:
 
     @eqx.filter_jit
     def train_step(model, params, opt_state, weights, batch):
-        (total, seperate), grads = jax.value_and_grad(
-            compute_weighted_loss, has_aux=True
+        (total, each_term), grads = jax.value_and_grad(
+            compute_weighted_loss, has_aux=True, holomorphic=True
         )(
             params,
             model=model,
             weights=weights,
             batch=batch,
             losses=losses,
+            criterion=criteria["split_mse"],
         )
 
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
-        return params, opt_state, (total, seperate)
+        return params, opt_state, (total, each_term)
 
     #
     # Training loop: all the optimization work is done here + logging
@@ -173,15 +193,18 @@ for arch, emb in setup:
         # The batch dictionary should have the same structure as `losses`
         batch = {"data": data_batch, "pde": pde_batch}
 
+        # Convert all float arrays to complex64
+        batch = jax.tree.map(
+            lambda x: x.astype(jnp.complex64)
+            if jnp.issubdtype(x.dtype, jnp.floating)
+            else x,
+            batch,
+        )
+
         # Do step
         params, opt_state, (loss, individual_losses) = train_step(
             pinn, params, opt_state, loss_weights, batch
         )
-
-        # Update adaptive weights
-        if step % update_weights_every == 0:
-            new_weights = compute_weights(params, pinn, batch, losses)
-            loss_weights = update_weights(0.9, loss_weights, new_weights)
 
         # Write to logger
         if step % log_every == 0:
