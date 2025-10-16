@@ -993,6 +993,7 @@ dependencies = [
     { name = "optax" },
     { name = "pyglet" },
     { name = "pytest" },
+    { name = "soap-jax" },
     { name = "tensorflow" },
     { name = "torch" },
     { name = "tqdm" },
@@ -1010,6 +1011,7 @@ requires-dist = [
     { name = "optax", specifier = ">=0.2.6" },
     { name = "pyglet", specifier = "<2" },
     { name = "pytest", specifier = ">=8.4.2" },
+    { name = "soap-jax", git = "https://github.com/haydn-jones/SOAP_JAX" },
     { name = "tensorflow", specifier = ">=2.20.0" },
     { name = "torch", specifier = ">=2.8.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
@@ -1712,6 +1714,16 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "soap-jax"
+version = "0.1.0"
+source = { git = "https://github.com/haydn-jones/SOAP_JAX#2c0c34fa02ae91ead7d8a65c3309a5cdaf8a091c" }
+dependencies = [
+    { name = "jax" },
+    { name = "jaxtyping" },
+    { name = "optax" },
 ]
 
 [[package]]

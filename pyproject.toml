@@ -17,6 +17,7 @@ dependencies = [
     "optax>=0.2.6",
     "pyglet<2",
     "pytest>=8.4.2",
+    "soap-jax",
     "tensorflow>=2.20.0",
     "torch>=2.8.0",
     "tqdm>=4.67.1",
@@ -26,4 +27,7 @@ dependencies = [
 [build-system]
 requires = ["uv_build>=0.8.21,<0.9.0"]
 build-backend = "uv_build"
+
+[tool.uv.sources]
+soap-jax = { git = "https://github.com/haydn-jones/SOAP_JAX" }
 
