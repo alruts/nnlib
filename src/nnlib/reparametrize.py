@@ -62,7 +62,7 @@ def reparametrize_linear(
 
 
 def siren_weight_dist(
-    shape: tuple[int, int],
+    shape: tuple[int, ...],
     omega_0: float,
     *,
     is_first: bool = False,
@@ -104,7 +104,7 @@ def siren_weight_dist(
 
 
 def siren_bias_dist(
-    shape: tuple[int],
+    shape: tuple[int, ...],
     *,
     is_first: bool = False,
     key: PRNGKeyArray,

@@ -5,7 +5,7 @@ from jaxtyping import Array, Complex
 from nnlib.misc import split_activation
 
 
-def complex_tanh(z: Complex) -> Complex:
+def split_tanh(z: Complex) -> Complex:
     """Applies tanh separately to the real and imaginary parts of a complex number."""
     return split_activation(jax.nn.tanh)(z)
 
@@ -26,8 +26,10 @@ def sin_activation(x: Array, angular_frequency: float) -> Array:
     return jnp.sin(angular_frequency * x)
 
 
-def split_sin_activation(z: Complex, angular_frequency: float) -> Array:
-    return split_activation(lambda x: sin_activation(x, angular_frequency))(z)
+def split_periodic_activation(z: Complex, angular_frequency: float) -> Complex:
+    return jnp.sin(angular_frequency * z.real) + 1j * jnp.sin(
+        angular_frequency * z.imag
+    )
 
 
 def identity_activation(x: Array) -> Array:

@@ -86,10 +86,7 @@ class WavePINN(eqx.Module):
         def p_fn(*coords):
             return self.p_net(params, *coords)
 
-        # Stack inputs along a new axis
         inputs = jnp.stack(args)
-
-        # Hessian: second derivatives w.r.t. all coordinates
         hess_p = jax.jacrev(lambda x: jax.jacrev(p_fn)(*x))(inputs)
         diag_hess = jnp.diag(hess_p)
 
@@ -163,19 +160,35 @@ class HelmholtzPINN(eqx.Module):
     def r_net(self, params, *args):
         """Computation of PDE residual for variable spatial dimensions."""
 
-        def p_fn(*coords):
-            return self.p_net(params, *coords)
+        def p_fn_real(x):
+            return jnp.real(self.p_net(params, *x)).astype(jnp.float32)
 
-        # Stack inputs along a new axis
-        inputs = jnp.stack(args)
+        def p_fn_imag(x):
+            return jnp.imag(self.p_net(params, *x)).astype(jnp.float32)
 
-        # Hessian: second derivatives w.r.t. all coordinates
-        hess_p = jax.jacrev(
-            lambda x: jax.jacrev(p_fn, holomorphic=True)(*x), holomorphic=True
-        )(inputs)
-        diag_hess = jnp.diag(hess_p)
-
-        # Assume spatial first, then time
-        laplacian = jnp.sum(diag_hess)
         k = (2 * jnp.pi * self.frequency) / self.wave_speed
-        return laplacian + (k**2) * p_fn(*args)
+
+        inputs = jnp.array(args)  # shape: (n_args,)
+        hess_real = jax.jacrev(jax.jacrev(p_fn_real))(inputs)
+        hess_imag = jax.jacrev(jax.jacrev(p_fn_imag))(inputs)
+
+        diag_hess = jnp.diag(hess_real + 1j * hess_imag)
+        laplacian = jnp.sum(diag_hess)
+
+        return laplacian + (k**2) * self.p_net(params, *args)
+
+
+# toy net
+pinn = HelmholtzPINN.create(
+    embedding=eqx.nn.Identity(),
+    arch_name="modified_mlp",
+    frequency=1,
+    in_size=2,
+    out_size="scalar",
+    width_size=4,
+    dtype=jax.numpy.complex64,
+    depth=3,
+    key=jax.random.PRNGKey(0),
+)
+params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
+print(pinn.r_net(params, 1.0, 1.0))

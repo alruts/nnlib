@@ -16,6 +16,10 @@ criteria = {
     "split_mae": lambda x, y, axis=None: jnp.mean(
         jnp.abs(x.real - y.real) + jnp.abs(x.imag - y.imag), axis=axis
     ).real,
+    "mag_phase": lambda x, y, axis=None, alpha=1.0, beta=1.0: (
+        alpha * jnp.mean((jnp.abs(x) - jnp.abs(y)) ** 2, axis=axis)
+        + beta * jnp.mean(jnp.angle(jnp.exp(1j * (x - y))) ** 2, axis=axis)
+    ),
 }
 
 
@@ -145,21 +149,29 @@ def compute_weights(
     losses: dict[str, Callable],
     criterion=criteria["mse"],
 ):
-    """Compute grad-norm-based weights for each loss in `losses` dict."""
-    # Compute gradient norms for each loss term
+    """Compute grad-norm-based weights for each loss in `losses` dict, supporting complex numbers."""
+
     grad_norms = {}
     for term, loss_fn in losses.items():
-        grads = jax.jacrev(loss_fn)(params, model, batch[term], criterion)
+        # Define a wrapper to flatten the output to a scalar if necessary
+        def loss_scalar(p):
+            return loss_fn(p, model, batch[term], criterion)
+
+        # Compute the vjp of the scalar loss
+        y, vjp_fn = jax.vjp(loss_scalar, params)
+
+        # For scalar outputs, vjp with 1.0 computes the gradient
+        grads = vjp_fn(jnp.ones_like(y))[0]
+
+        # Flatten the gradients and compute proper complex norm
         flat_grads = jnp.concatenate([g.ravel() for g in jax.tree.leaves(grads)])
-        grad_norms[term] = jnp.linalg.norm(flat_grads)
+        grad_norms[term] = jnp.sqrt(jnp.sum(jnp.abs(flat_grads) ** 2))
 
     grad_norm_values = jnp.stack(list(grad_norms.values()))
-
-    # Compute mean grad norm
     mean_grad_norm = jnp.mean(grad_norm_values)
 
     # Compute weights
-    weights = jax.tree.map(lambda x: (mean_grad_norm / x), grad_norms)
+    weights = {term: mean_grad_norm / norm for term, norm in grad_norms.items()}
 
     return weights
 

@@ -1,5 +1,4 @@
 import warnings
-from pathlib import Path
 
 import equinox as eqx
 import jax
@@ -7,10 +6,15 @@ import optax
 from jax import numpy as jnp
 from jax import random as jrandom
 from matplotlib import pyplot as plt
+from soap_jax import soap
 from tqdm import tqdm
 
 from nnlib import feature_maps
-from nnlib.activations import cardioid, split_sin_activation
+from nnlib.activations import (
+    cardioid,
+    split_periodic_activation,
+    split_tanh,
+)
 from nnlib.data_utils import (
     DataPointSampler,
     UniformSampler,
@@ -19,18 +23,17 @@ from nnlib.data_utils import (
 from nnlib.data_utils.data_structures import GridDiscretisationND
 from nnlib.logger import TensorboardLogger
 from nnlib.losses import (
+    compute_loss,
     compute_weighted_loss,
     compute_weights,
     criteria,
     data_loss,
-    make_loss,
     pde_loss,
     update_weights,
 )
 from nnlib.misc import default_wave_speed, grid_map
 from nnlib.pinn import HelmholtzPINN
 
-warnings.filterwarnings("error")
 seed_key = jrandom.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 
@@ -39,28 +42,26 @@ data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 # and to load random batches of data points
 #
 
-FREQUENCY = 440
+FREQUENCY = 5
+A = 1 - 1 * 1j
 
 
-def point_source(x, x0=jnp.array([0.0, 0.0]), f=FREQUENCY):
-    r, r0 = jnp.linalg.norm(x), jnp.linalg.norm(x0)
-    R = jnp.abs(r - r0)
+def point_source(x, x0=jnp.array([1.0, 1.0]), f=FREQUENCY):
+    R = jnp.sqrt(jnp.sum(jnp.abs(x - x0) ** 2))
     k = (2 * jnp.pi * f) / default_wave_speed()
-    return jnp.exp(-1j * k * R) / R
+    return A * (jnp.exp(-1j * k * R) / R)
 
 
 data = GridDiscretisationND.discretise_fn(
-    [(-0.1, 0.1), (-0.1, 0.1)], n_points=[256, 256], fn=point_source
+    [(-0.5, 0.5), (-0.5, 0.5)], n_points=[256, 256], fn=point_source
 )
 
 
 dataset = DataPointSampler(
-    point_cloud=subsample.random_sample(
+    point_cloud=subsample.full_data(
         data,
-        num_points=int(data.n_points * 0.01),  # take 1% of data
-        key=subsample_key,
     ),  # returns `PointCloud` with random samples
-    batch_size=32,
+    batch_size=128,
     key=data_key,
 )
 
@@ -72,7 +73,7 @@ infinite_point_generator = iter(domain_sampler)
 
 # Random Fourier features for input coordinates helps with low-frequency bias
 rff_emb = feature_maps.RandomFourierFeatures(
-    embed_scale=10.0, embed_dim=256, in_dim=2, key=emb_key
+    embed_scale=20.0, embed_dim=256, in_dim=2, key=emb_key
 )
 id_emb = eqx.nn.Identity()  # simply does nothing
 
@@ -81,8 +82,8 @@ setup = (
     ["mlp", rff_emb],
     ["modified_mlp", rff_emb],
     ["pirate_net", rff_emb],
-    ["siren", id_emb],
     ["modified_siren", id_emb],
+    ["siren", id_emb],
 )
 
 #
@@ -95,7 +96,7 @@ update_weights_every = 100
 
 # Arbitrary loss terms can be added, single loss also works
 # losses = {"data": data_loss}
-# update_weights_every = jnp.inf # hack to avoid using adaptive weights
+# update_weights_every = jnp.inf  # hack to avoid using adaptive weights
 
 # Initialize the weights for adaptive grad norm, these are updated after the first step
 # and every `update_weights_every` steps after that
@@ -118,7 +119,7 @@ def plot_pred(pressure):
     fig = plt.figure(figsize=(6, 5))
     plt.pcolormesh(
         *data.coordinate_arrays,
-        pressure.real,
+        pressure,
         shading="auto",
         cmap="jet",
     )
@@ -135,6 +136,8 @@ def plot_pred(pressure):
 for arch, emb in setup:
     # initialize logger
     logger = TensorboardLogger(experiment_name=f"test-run_{arch}")
+    logger.log_plot("plots/gt_re", plot_pred, data.vals.real, 0)  # to visually compare
+    logger.log_plot("plots/gt_im", plot_pred, data.vals.imag, 0)  # to visually compare
     log_every = 1000
 
     # build PINN
@@ -146,9 +149,9 @@ for arch, emb in setup:
         out_size="scalar",
         width_size=32,
         depth=3,
-        key=net_key,
         dtype=jnp.complex64,
-        # activation=split_sin_activation,
+        activation=split_tanh,
+        key=net_key,
     )
 
     # Extract the trainable parameters of the neural-net as a `PyTree`
@@ -167,17 +170,17 @@ for arch, emb in setup:
     @eqx.filter_jit
     def train_step(model, params, opt_state, weights, batch):
         (total, each_term), grads = jax.value_and_grad(
-            compute_weighted_loss, has_aux=True, holomorphic=True
+            compute_weighted_loss, has_aux=True
         )(
             params,
             model=model,
-            weights=weights,
             batch=batch,
+            weights=weights,
             losses=losses,
             criterion=criteria["split_mse"],
         )
-
-        updates, opt_state = optimizer.update(grads, opt_state, params)
+        grads_conj = jax.tree.map(jnp.conj, grads)
+        updates, opt_state = optimizer.update(grads_conj, opt_state, params)
         params = optax.apply_updates(params, updates)
         return params, opt_state, (total, each_term)
 
@@ -193,18 +196,15 @@ for arch, emb in setup:
         # The batch dictionary should have the same structure as `losses`
         batch = {"data": data_batch, "pde": pde_batch}
 
-        # Convert all float arrays to complex64
-        batch = jax.tree.map(
-            lambda x: x.astype(jnp.complex64)
-            if jnp.issubdtype(x.dtype, jnp.floating)
-            else x,
-            batch,
-        )
-
         # Do step
         params, opt_state, (loss, individual_losses) = train_step(
             pinn, params, opt_state, loss_weights, batch
         )
+
+        # Update adaptive weights
+        if step % update_weights_every == 0:
+            new_weights = compute_weights(params, pinn, batch, losses)
+            loss_weights = update_weights(0.9, loss_weights, new_weights)
 
         # Write to logger
         if step % log_every == 0:
@@ -218,7 +218,8 @@ for arch, emb in setup:
 
             # make a prediction
             pred = compute_pressure(params, pinn)
-            pred_error = jnp.mean(jnp.square(data.vals - pred))
+            pred_error = criteria["split_mse"](pred, data.vals)
 
             logger.log_scalar("error/mse", pred_error, step)
-            logger.log_plot("plots/pred", plot_pred, pred, step)
+            logger.log_plot("plots/pred_re", plot_pred, pred.real, step)
+            logger.log_plot("plots/pred_im", plot_pred, pred.imag, step)

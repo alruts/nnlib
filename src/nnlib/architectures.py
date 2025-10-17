@@ -370,9 +370,9 @@ def make_siren(
     first_layer = reparametrize_linear(
         mlp.layers[0],
         weight_dist=lambda k, s: siren_weight_dist(
-            s, omega_0=angular_frequency, is_first=True, key=k
+            s, omega_0=angular_frequency, is_first=True, dtype=dtype, key=k
         ),
-        bias_dist=lambda k, s: siren_bias_dist(s, is_first=True, key=k),
+        bias_dist=lambda k, s: siren_bias_dist(s, is_first=True, dtype=dtype, key=k),
         key=next(key_iter),
     )
 
@@ -380,9 +380,11 @@ def make_siren(
         reparametrize_linear(
             layer,
             weight_dist=lambda k, s: siren_weight_dist(
-                s, omega_0=angular_frequency, is_first=False, key=k
+                s, omega_0=angular_frequency, is_first=True, dtype=dtype, key=k
             ),
-            bias_dist=lambda k, s: siren_bias_dist(s, is_first=False, key=k),
+            bias_dist=lambda k, s: siren_bias_dist(
+                s, is_first=False, dtype=dtype, key=k
+            ),
             key=next(key_iter),
         )
         for layer in mlp.layers[1:]
@@ -448,9 +450,11 @@ def make_modified_siren(
         reparametrize_linear(
             layer,
             weight_dist=lambda k, s: siren_weight_dist(
-                s, omega_0=angular_frequency, is_first=True, key=k
+                s, omega_0=angular_frequency, is_first=True, dtype=dtype, key=k
             ),
-            bias_dist=lambda k, s: siren_bias_dist(s, is_first=True, key=k),
+            bias_dist=lambda k, s: siren_bias_dist(
+                s, is_first=True, dtype=dtype, key=k
+            ),
             key=next(key_iter),
         )
         for layer in (mod_mlp.layers[0], mod_mlp.u, mod_mlp.v)
@@ -460,9 +464,11 @@ def make_modified_siren(
         reparametrize_linear(
             layer,
             weight_dist=lambda k, s: siren_weight_dist(
-                s, omega_0=angular_frequency, is_first=False, key=k
+                s, omega_0=angular_frequency, is_first=False, dtype=dtype, key=k
             ),
-            bias_dist=lambda k, s: siren_bias_dist(s, is_first=False, key=k),
+            bias_dist=lambda k, s: siren_bias_dist(
+                s, is_first=False, dtype=dtype, key=k
+            ),
             key=next(key_iter),
         )
         for layer in mod_mlp.layers[1:]
