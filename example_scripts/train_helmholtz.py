@@ -1,18 +1,13 @@
-import warnings
-
 import equinox as eqx
 import jax
 import optax
 from jax import numpy as jnp
 from jax import random as jrandom
 from matplotlib import pyplot as plt
-from soap_jax import soap
 from tqdm import tqdm
 
 from nnlib import feature_maps
 from nnlib.activations import (
-    cardioid,
-    split_periodic_activation,
     split_tanh,
 )
 from nnlib.data_utils import (
@@ -23,20 +18,19 @@ from nnlib.data_utils import (
 from nnlib.data_utils.data_structures import GridDiscretisationND
 from nnlib.logger import TensorboardLogger
 from nnlib.losses import (
-    compute_loss,
+    aggregated_metrics,
     compute_weighted_loss,
     compute_weights,
-    criteria,
     data_loss,
     pde_loss,
+    point_wise_metrics,
     update_weights,
 )
-from nnlib.misc import default_wave_speed, grid_map
+from nnlib.misc import default_wave_speed, grid_map, split_loss, split_metric
 from nnlib.pinn import HelmholtzPINN
 
 seed_key = jrandom.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
-
 #
 # Construct infinite data generators for PDE collocation points
 # and to load random batches of data points
@@ -44,6 +38,12 @@ data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 
 FREQUENCY = 5
 A = 1 - 1 * 1j
+
+
+##
+import warnings
+
+# warnings.filterwarnings("error")
 
 
 def point_source(x, x0=jnp.array([1.0, 1.0]), f=FREQUENCY):
@@ -55,7 +55,6 @@ def point_source(x, x0=jnp.array([1.0, 1.0]), f=FREQUENCY):
 data = GridDiscretisationND.discretise_fn(
     [(-0.5, 0.5), (-0.5, 0.5)], n_points=[256, 256], fn=point_source
 )
-
 
 dataset = DataPointSampler(
     point_cloud=subsample.full_data(
@@ -94,10 +93,6 @@ setup = (
 losses = {"data": data_loss, "pde": pde_loss}
 update_weights_every = 100
 
-# Arbitrary loss terms can be added, single loss also works
-# losses = {"data": data_loss}
-# update_weights_every = jnp.inf  # hack to avoid using adaptive weights
-
 # Initialize the weights for adaptive grad norm, these are updated after the first step
 # and every `update_weights_every` steps after that
 loss_weights = {key: jnp.array(1.0) for key in losses.keys()}
@@ -125,7 +120,7 @@ def plot_pred(pressure):
     )
     plt.colorbar(label="Pressure")
     plt.xlabel("x")
-    plt.ylabel("t")
+    plt.ylabel("y")
     return fig
 
 
@@ -169,7 +164,7 @@ for arch, emb in setup:
 
     @eqx.filter_jit
     def train_step(model, params, opt_state, weights, batch):
-        (total, each_term), grads = jax.value_and_grad(
+        (total, each_term), grads = jax.value_and_grad(  # to visually compare
             compute_weighted_loss, has_aux=True
         )(
             params,
@@ -177,7 +172,7 @@ for arch, emb in setup:
             batch=batch,
             weights=weights,
             losses=losses,
-            criterion=criteria["split_mse"],
+            criterion=split_loss(aggregated_metrics["mse"]),
         )
         grads_conj = jax.tree.map(jnp.conj, grads)
         updates, opt_state = optimizer.update(grads_conj, opt_state, params)
@@ -218,8 +213,17 @@ for arch, emb in setup:
 
             # make a prediction
             pred = compute_pressure(params, pinn)
-            pred_error = criteria["split_mse"](pred, data.vals)
 
-            logger.log_scalar("error/mse", pred_error, step)
+            # aggregated metrics
+            pred_error = split_metric(aggregated_metrics["mse"])(pred, data.vals)
+            logger.log_scalar("error/mse_re", pred_error.real, step)
+            logger.log_scalar("error/mse_im", pred_error.imag, step)
+
+            # compute point-wise metrics
+            for metric, fn in point_wise_metrics.items():
+                error = split_metric(fn)(pred, data.vals)
+                logger.log_plot(f"errors/{metric}_re", plot_pred, error.real, step)
+                logger.log_plot(f"errors/{metric}_im", plot_pred, error.imag, step)
+
             logger.log_plot("plots/pred_re", plot_pred, pred.real, step)
             logger.log_plot("plots/pred_im", plot_pred, pred.imag, step)

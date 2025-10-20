@@ -19,6 +19,7 @@ from nnlib.data_utils import (
 from nnlib.data_utils.data_structures import GridDiscretisationND
 from nnlib.logger import TensorboardLogger
 from nnlib.losses import (
+    aggregated_metrics,
     compute_weighted_loss,
     compute_weights,
     data_loss,
@@ -162,6 +163,7 @@ for arch, emb in setup:
             weights=weights,
             batch=batch,
             losses=losses,
+            criterion=aggregated_metrics["mse"],
         )
 
         updates, opt_state = optimizer.update(grads, opt_state, params)

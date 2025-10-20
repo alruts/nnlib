@@ -13,8 +13,18 @@ _default_constants = {
 
 
 def split_activation(fn: Callable):
-    """Lift activation from R->R to C->C."""
+    """Split activation to apply separately to real and imaginary part."""
     return lambda z: fn(jnp.real(z)) + 1j * fn(jnp.imag(z))
+
+
+def split_metric(fn: Callable):
+    """Split metric to apply separately to real and imaginary part."""
+    return lambda x, xx: fn(x.real, xx.real) + 1j * fn(x.imag, xx.imag)
+
+
+def split_loss(fn: Callable):
+    """Split loss to apply separately to real and imaginary part."""
+    return lambda x, xx: fn(x.real, xx.real) + fn(x.imag, xx.imag)
 
 
 def default_floating_dtype():

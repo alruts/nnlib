@@ -3,9 +3,15 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import vmap
+from jax import Array
+from jaxtyping import Float, PyTree
 
-from nnlib.architectures import ModifiedMLP, PirateNet, make_modified_siren, make_siren
+from nnlib.architectures import (
+    ModifiedMLP,
+    PirateNet,
+    make_modified_siren,
+    make_siren,
+)
 from nnlib.feature_maps import PeriodicFeatures, RandomFourierFeatures
 from nnlib.misc import (
     apply_model,
@@ -32,7 +38,7 @@ class WavePINN(eqx.Module):
     """
 
     model: eqx.Module
-    embedding: PeriodicFeatures | RandomFourierFeatures | eqx.nn.Identity
+    embedding: PeriodicFeatures | RandomFourierFeatures | None = None
     wave_speed: float = default_wave_speed()
     medium_density: float = default_medium_density()
 
@@ -42,7 +48,7 @@ class WavePINN(eqx.Module):
         arch_name: Literal[
             "modified_mlp", "mlp", "pirate_net", "siren", "modified_siren"
         ],
-        embedding: PeriodicFeatures | RandomFourierFeatures | eqx.nn.Identity,
+        embedding: PeriodicFeatures | RandomFourierFeatures | None = None,
         wave_speed: float | None = None,
         medium_density: float | None = None,
         **arch_kwargs,
@@ -54,7 +60,7 @@ class WavePINN(eqx.Module):
                 arch_kwargs["in_size"] *= 2
             case RandomFourierFeatures():
                 arch_kwargs["in_size"] = embedding.embed_dim
-            case eqx.nn.Identity():
+            case None:
                 pass
             case _:
                 raise ValueError(f"Unsupported embedding: {embedding}")
@@ -76,23 +82,42 @@ class WavePINN(eqx.Module):
 
     def p_net(self, params, *args):
         """Forward computation of pressure"""
-        # apply embeddings
-        input_arr = lift_to_args(self.embedding)(*args)
-        return apply_model(self.model, params, input_arr)
+        x = jnp.stack(args)
+
+        if self.embedding:
+            x = self.embedding(x)
+        else:
+            pass
+
+        return apply_model(self.model, params, x)
 
     def r_net(self, params, *args):
-        """Computation of PDE residual for variable spatial dimensions."""
+        """Computation of PDE residual for variable spatial dimensions.
 
-        def p_fn(*coords):
-            return self.p_net(params, *coords)
+        Validation with a polynomial model:
+            >>> import jax.numpy as jnp
+            >>> import equinox as eqx
+            >>> polynomial = lambda x: x[0]**3 + x[1]**3
+            >>> wave_speed = 2.0
+            >>> pinn = WavePINN(model=polynomial, wave_speed=wave_speed)
+            >>> params = eqx.filter(pinn.model, eqx.is_array)
+            >>> print(pinn.r_net(params, 1.0, 1.0)) # 6 - (6/4) = 4.5
+            4.5
 
-        inputs = jnp.stack(args)
-        hess_p = jax.jacrev(lambda x: jax.jacrev(p_fn)(*x))(inputs)
-        diag_hess = jnp.diag(hess_p)
+        """
 
-        # Assume spatial first, then time
-        laplacian = jnp.sum(diag_hess[:-1])
-        p_tt = diag_hess[-1]
+        def p_fn(*x):
+            return self.p_net(params, *x)
+
+        second_derivatives = []
+
+        for idx in range(len(args)):
+            second_derivatives.append(
+                jax.grad(lambda *x: jax.grad(p_fn, idx)(*x), idx)(*args)
+            )
+
+        p_tt = jnp.array(second_derivatives[-1])
+        laplacian = jnp.sum(jnp.array(second_derivatives[:-1]))
 
         return p_tt - (1.0 / self.wave_speed**2) * laplacian
 
@@ -106,8 +131,8 @@ class HelmholtzPINN(eqx.Module):
     """
 
     model: eqx.Module
-    embedding: PeriodicFeatures | RandomFourierFeatures | eqx.nn.Identity
     frequency: float
+    embedding: PeriodicFeatures | RandomFourierFeatures | None = None
     wave_speed: float = default_wave_speed()
     medium_density: float = default_medium_density()
 
@@ -117,7 +142,7 @@ class HelmholtzPINN(eqx.Module):
         arch_name: Literal[
             "modified_mlp", "mlp", "pirate_net", "siren", "modified_siren"
         ],
-        embedding: PeriodicFeatures | RandomFourierFeatures | eqx.nn.Identity,
+        embedding: PeriodicFeatures | RandomFourierFeatures | None,
         frequency: float,
         wave_speed: float | None = None,
         medium_density: float | None = None,
@@ -153,42 +178,116 @@ class HelmholtzPINN(eqx.Module):
 
     def p_net(self, params, *args):
         """Forward computation of pressure"""
-        # apply embeddings
-        input_arr = lift_to_args(self.embedding)(*args)
-        return apply_model(self.model, params, input_arr)
+        x = jnp.stack(args)
+
+        if self.embedding:
+            x = self.embedding(x)
+        else:
+            pass
+
+        return apply_model(self.model, params, x)
 
     def r_net(self, params, *args):
-        """Computation of PDE residual for variable spatial dimensions."""
+        """Computation of PDE residual for variable spatial dimensions.
 
-        def p_fn_real(x):
-            return jnp.real(self.p_net(params, *x)).astype(jnp.float32)
+        Validation with a polynomial model:
+            >>> import jax.numpy as jnp
+            >>> import equinox as eqx
+            >>> polynomial = lambda x: x[0]**3 + x[1]**3 * 1j
+            >>> wave_speed = 2.0 * jnp.pi
+            >>> pinn = HelmholtzPINN(model=polynomial, frequency=1, wave_speed=wave_speed)
+            >>> params = eqx.filter(pinn.model, eqx.is_array)
+            >>> print(pinn.r_net(params, 1.0, 1.0)) # (6 + 6j) + (1 + 1j)
+            (7+7j)
 
-        def p_fn_imag(x):
-            return jnp.imag(self.p_net(params, *x)).astype(jnp.float32)
+        """
 
+        def p_fn_real(*x):
+            return self.p_net(params, *x).real
+
+        def p_fn_imag(*x):
+            return self.p_net(params, *x).imag
+
+        second_derivatives_real = []
+        second_derivatives_imag = []
+
+        for idx in range(len(args)):
+            second_derivatives_real.append(
+                jax.grad(lambda *x: jax.grad(p_fn_real, idx)(*x), idx)(*args)
+            )
+            second_derivatives_imag.append(
+                jax.grad(lambda *x: jax.grad(p_fn_imag, idx)(*x), idx)(*args)
+            )
+
+        laplacian = jnp.sum(
+            jnp.array(second_derivatives_real) + 1j * jnp.array(second_derivatives_imag)
+        )
         k = (2 * jnp.pi * self.frequency) / self.wave_speed
 
-        inputs = jnp.array(args)  # shape: (n_args,)
-        hess_real = jax.jacrev(jax.jacrev(p_fn_real))(inputs)
-        hess_imag = jax.jacrev(jax.jacrev(p_fn_imag))(inputs)
+        return laplacian + (k**2) * self.p_net(params, *args)
 
-        diag_hess = jnp.diag(hess_real + 1j * hess_imag)
-        laplacian = jnp.sum(diag_hess)
+    # def r_net(self, params: PyTree[Array], *args: Float) -> Array:
+    #     """
+    #     Compute the Laplacian of p_net plus the k^2 * p_net term,
+    #     using complex differentiation with holomorphic=True.
+    #     """
+    #
+    #     x = jnp.stack(args)
+    #
+    #     hess_re = jax.jacrev(jax.jacfwd(lambda x: self.p_net(params, *x).real))(x)
+    #     hess_im = jax.jacrev(jax.jacfwd(lambda x: self.p_net(params, *x).imag))(x)
+    #     hess = 0.5 * (hess_re + 1j * hess_im)
+    #
+    #     laplacian = jnp.trace(hess)
+    #     k = (2 * jnp.pi * self.frequency) / self.wave_speed
+    #
+    #     return laplacian + (k**2) * self.p_net(params, *args)
+
+    def r_net_holo(self, params: PyTree[Array], *args: Float) -> Array:
+        """
+        Compute the Laplacian of p_net plus the k^2 * p_net term,
+        using complex differentiation with holomorphic=True.
+        """
+
+        x = jnp.stack(args)  # shape (num_args, ...)
+
+        # Compute full Hessian of p_net (complex-valued) w.r.t x
+        hess = jax.jacrev(
+            jax.jacfwd(lambda x: self.p_net(params, *x), holomorphic=True),
+            holomorphic=True,
+        )(x)
+
+        # Laplacian: sum of diagonal elements of the Hessian
+        laplacian = jnp.trace(hess)
+
+        k = (2 * jnp.pi * self.frequency) / self.wave_speed
 
         return laplacian + (k**2) * self.p_net(params, *args)
 
 
 # toy net
-pinn = HelmholtzPINN.create(
-    embedding=eqx.nn.Identity(),
-    arch_name="modified_mlp",
-    frequency=1,
-    in_size=2,
-    out_size="scalar",
-    width_size=4,
-    dtype=jax.numpy.complex64,
-    depth=3,
-    key=jax.random.PRNGKey(0),
-)
-params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
+# pinn = HelmholtzPINN.create(
+#     embedding=eqx.nn.Identity(),
+#     arch_name="modified_mlp",
+#     frequency=1,
+#     in_size=2,
+#     out_size="scalar",
+#     width_size=4,
+#     dtype=jax.numpy.complex64,
+#     depth=3,
+#     key=jax.random.PRNGKey(0),
+# )
+# params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
+# print(pinn.r_net(params, 1.0, 1.0))
+# print(pinn.r_net_holo(params, 1.0 + 0j, 1.0 - 0j))
+# import jax
+# import jax.numpy as jnp
+import equinox as eqx
+import jax.numpy as jnp
+
+polynomial = lambda x: jnp.sum(jnp.pow(x, 3))
+wave_speed = 1.0
+pinn = WavePINN(model=polynomial, wave_speed=wave_speed)
+params = eqx.filter(pinn.model, eqx.is_inexact_array)
+print(pinn.p_net(params, 3.0, 1.0))
 print(pinn.r_net(params, 1.0, 1.0))
