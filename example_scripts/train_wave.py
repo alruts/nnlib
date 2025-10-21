@@ -43,14 +43,16 @@ data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 #
 
 dataset = DataPointSampler(
-    point_cloud=subsample.full_data(
+    point_cloud=subsample.random_sample(
         data,
+        num_points=256,
+        key=subsample_key,
     ),  # returns `PointCloud` with all samples
-    batch_size=32,
+    batch_size=1024,
     key=data_key,
 )
 
-domain_sampler = UniformSampler([(-1, 1), (-1, 1)], batch_size=128, key=dom_key)
+domain_sampler = UniformSampler([(-1, 1), (-1, 1)], batch_size=4096, key=dom_key)
 
 # These are infinitely iterable
 infinite_dataloader = iter(dataset)
@@ -63,11 +65,11 @@ rff_emb = feature_maps.RandomFourierFeatures(
 
 # Pairs of embeddings and architectures for loop
 setup = (
+    ["siren", None],
+    ["modified_siren", None],
     ["mlp", rff_emb],
     ["modified_mlp", rff_emb],
     ["pirate_net", rff_emb],
-    ["siren", None],
-    ["modified_siren", None],
 )
 
 #
@@ -138,7 +140,6 @@ for arch, emb in setup:
 
     # Initialize the Adam optimizer with learning rate scheduler
     learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
-
     # optimizer = optax.adam(learning_rate)
 
     optimizer = soap(
