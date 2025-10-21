@@ -43,9 +43,9 @@ data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 #
 
 dataset = DataPointSampler(
-    point_cloud=subsample.random_sample(
-        data, num_points=1024, key=subsample_key
-    ),  # returns `PointCloud` with random samples
+    point_cloud=subsample.full_data(
+        data,
+    ),  # returns `PointCloud` with all samples
     batch_size=32,
     key=data_key,
 )
@@ -60,15 +60,14 @@ infinite_point_generator = iter(domain_sampler)
 rff_emb = feature_maps.RandomFourierFeatures(
     embed_scale=10.0, embed_dim=256, in_dim=2, key=emb_key
 )
-id_emb = eqx.nn.Identity()  # simply does nothing
 
 # Pairs of embeddings and architectures for loop
 setup = (
     ["mlp", rff_emb],
     ["modified_mlp", rff_emb],
     ["pirate_net", rff_emb],
-    ["siren", id_emb],
-    ["modified_siren", id_emb],
+    ["siren", None],
+    ["modified_siren", None],
 )
 
 #
@@ -139,13 +138,13 @@ for arch, emb in setup:
 
     # Initialize the Adam optimizer with learning rate scheduler
     learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
+
     # optimizer = optax.adam(learning_rate)
 
     optimizer = soap(
         learning_rate=learning_rate,
         precondition_frequency=2,
     )
-
     opt_state = optimizer.init(params)  # Running state of the optimizer
 
     #

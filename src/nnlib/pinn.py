@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Callable, Literal
 
 import equinox as eqx
 import jax
@@ -17,7 +17,6 @@ from nnlib.misc import (
     apply_model,
     default_medium_density,
     default_wave_speed,
-    lift_to_args,
 )
 
 arch_lib = {
@@ -37,7 +36,7 @@ class WavePINN(eqx.Module):
     (velocity, impedance) with support for batched grid predictions.
     """
 
-    model: eqx.Module
+    model: Callable
     embedding: PeriodicFeatures | RandomFourierFeatures | None = None
     wave_speed: float = default_wave_speed()
     medium_density: float = default_medium_density()
@@ -101,25 +100,23 @@ class WavePINN(eqx.Module):
             >>> wave_speed = 2.0
             >>> pinn = WavePINN(model=polynomial, wave_speed=wave_speed)
             >>> params = eqx.filter(pinn.model, eqx.is_array)
-            >>> print(pinn.r_net(params, 1.0, 1.0)) # 6 - (6/4) = 4.5
-            4.5
+            >>> print(pinn.r_net(params, 1.0, -1.0)) # 6(1) - (6/4)(-1) = 7.5
+            7.5
 
         """
 
         def p_fn(*x):
             return self.p_net(params, *x)
 
-        second_derivatives = []
+        second_derivs = [
+            jax.grad(lambda *x: jax.grad(p_fn, argnum)(*x), argnum)(*args)
+            for argnum in range(len(args))
+        ]
 
-        for idx in range(len(args)):
-            second_derivatives.append(
-                jax.grad(lambda *x: jax.grad(p_fn, idx)(*x), idx)(*args)
-            )
+        p_tt = jnp.array(second_derivs[-1])
+        laplacian = jnp.sum(jnp.array(second_derivs[:-1]))
 
-        p_tt = jnp.array(second_derivatives[-1])
-        laplacian = jnp.sum(jnp.array(second_derivatives[:-1]))
-
-        return p_tt - (1.0 / self.wave_speed**2) * laplacian
+        return laplacian - (1.0 / self.wave_speed**2) * p_tt
 
 
 class HelmholtzPINN(eqx.Module):
@@ -130,7 +127,7 @@ class HelmholtzPINN(eqx.Module):
     (velocity, impedance) with support for batched grid predictions.
     """
 
-    model: eqx.Module
+    model: Callable
     frequency: float
     embedding: PeriodicFeatures | RandomFourierFeatures | None = None
     wave_speed: float = default_wave_speed()
@@ -199,7 +196,6 @@ class HelmholtzPINN(eqx.Module):
             >>> params = eqx.filter(pinn.model, eqx.is_array)
             >>> print(pinn.r_net(params, 1.0, 1.0)) # (6 + 6j) + (1 + 1j)
             (7+7j)
-
         """
 
         def p_fn_real(*x):
@@ -208,86 +204,19 @@ class HelmholtzPINN(eqx.Module):
         def p_fn_imag(*x):
             return self.p_net(params, *x).imag
 
-        second_derivatives_real = []
-        second_derivatives_imag = []
+        second_derivs_real = [
+            jax.grad(lambda *x: jax.grad(p_fn_real, argnum)(*x), argnum)(*args)
+            for argnum in range(len(args))
+        ]
 
-        for idx in range(len(args)):
-            second_derivatives_real.append(
-                jax.grad(lambda *x: jax.grad(p_fn_real, idx)(*x), idx)(*args)
-            )
-            second_derivatives_imag.append(
-                jax.grad(lambda *x: jax.grad(p_fn_imag, idx)(*x), idx)(*args)
-            )
+        second_derivs_imag = [
+            jax.grad(lambda *x: jax.grad(p_fn_imag, argnum)(*x), argnum)(*args)
+            for argnum in range(len(args))
+        ]
 
         laplacian = jnp.sum(
-            jnp.array(second_derivatives_real) + 1j * jnp.array(second_derivatives_imag)
+            jnp.array(second_derivs_real) + 1j * jnp.array(second_derivs_imag)
         )
         k = (2 * jnp.pi * self.frequency) / self.wave_speed
 
         return laplacian + (k**2) * self.p_net(params, *args)
-
-    # def r_net(self, params: PyTree[Array], *args: Float) -> Array:
-    #     """
-    #     Compute the Laplacian of p_net plus the k^2 * p_net term,
-    #     using complex differentiation with holomorphic=True.
-    #     """
-    #
-    #     x = jnp.stack(args)
-    #
-    #     hess_re = jax.jacrev(jax.jacfwd(lambda x: self.p_net(params, *x).real))(x)
-    #     hess_im = jax.jacrev(jax.jacfwd(lambda x: self.p_net(params, *x).imag))(x)
-    #     hess = 0.5 * (hess_re + 1j * hess_im)
-    #
-    #     laplacian = jnp.trace(hess)
-    #     k = (2 * jnp.pi * self.frequency) / self.wave_speed
-    #
-    #     return laplacian + (k**2) * self.p_net(params, *args)
-
-    def r_net_holo(self, params: PyTree[Array], *args: Float) -> Array:
-        """
-        Compute the Laplacian of p_net plus the k^2 * p_net term,
-        using complex differentiation with holomorphic=True.
-        """
-
-        x = jnp.stack(args)  # shape (num_args, ...)
-
-        # Compute full Hessian of p_net (complex-valued) w.r.t x
-        hess = jax.jacrev(
-            jax.jacfwd(lambda x: self.p_net(params, *x), holomorphic=True),
-            holomorphic=True,
-        )(x)
-
-        # Laplacian: sum of diagonal elements of the Hessian
-        laplacian = jnp.trace(hess)
-
-        k = (2 * jnp.pi * self.frequency) / self.wave_speed
-
-        return laplacian + (k**2) * self.p_net(params, *args)
-
-
-# toy net
-# pinn = HelmholtzPINN.create(
-#     embedding=eqx.nn.Identity(),
-#     arch_name="modified_mlp",
-#     frequency=1,
-#     in_size=2,
-#     out_size="scalar",
-#     width_size=4,
-#     dtype=jax.numpy.complex64,
-#     depth=3,
-#     key=jax.random.PRNGKey(0),
-# )
-# params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
-# print(pinn.r_net(params, 1.0, 1.0))
-# print(pinn.r_net_holo(params, 1.0 + 0j, 1.0 - 0j))
-# import jax
-# import jax.numpy as jnp
-import equinox as eqx
-import jax.numpy as jnp
-
-polynomial = lambda x: jnp.sum(jnp.pow(x, 3))
-wave_speed = 1.0
-pinn = WavePINN(model=polynomial, wave_speed=wave_speed)
-params = eqx.filter(pinn.model, eqx.is_inexact_array)
-print(pinn.p_net(params, 3.0, 1.0))
-print(pinn.r_net(params, 1.0, 1.0))

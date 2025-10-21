@@ -9,6 +9,7 @@ from jax import random as jrandom
 from jaxtyping import PRNGKeyArray
 
 from nnlib.data_utils.data_structures import PointCloud, Triangle
+from nnlib.misc import default_floating_dtype
 
 
 class BaseSampler:
@@ -107,8 +108,12 @@ class MeshSampler(BaseSampler):
     ):
         super().__init__(batch_size, key=key)
         self.mesh: trimesh.Trimesh = mesh
-        self.triangles: Array = jnp.array(mesh.triangles, dtype=jnp.float32)
-        self.normals: Array = jnp.array(mesh.face_normals, dtype=jnp.float32)
+        self.triangles: Array = jnp.array(
+            mesh.triangles, dtype=default_floating_dtype()
+        )
+        self.normals: Array = jnp.array(
+            mesh.face_normals, dtype=default_floating_dtype()
+        )
 
         if not self.mesh.is_watertight:
             warn("Mesh is not watertight.")

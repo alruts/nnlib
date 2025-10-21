@@ -26,7 +26,13 @@ from nnlib.losses import (
     point_wise_metrics,
     update_weights,
 )
-from nnlib.misc import default_wave_speed, grid_map, split_loss, split_metric
+from nnlib.misc import (
+    default_complex_dtype,
+    default_wave_speed,
+    grid_map,
+    split_loss,
+    split_metric,
+)
 from nnlib.pinn import HelmholtzPINN
 
 seed_key = jrandom.PRNGKey(0)
@@ -144,7 +150,7 @@ for arch, emb in setup:
         out_size="scalar",
         width_size=32,
         depth=3,
-        dtype=jnp.complex64,
+        dtype=default_complex_dtype(),
         activation=split_tanh,
         key=net_key,
     )
