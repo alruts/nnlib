@@ -37,32 +37,19 @@ data = GridDiscretisationND(
 c = default_wave_speed()
 
 
-def acoustic_point_source_1d(coord):
+def wave_pressure(x, A=1.0, k=0.1 * jnp.pi, c=default_wave_speed()):
     """
-    1D acoustic point source u(x,t) with a Gaussian pulse.
-    Assumes constant wave speed c.
-
-    Gaussian pulse: S(t) = exp(-(t-t0)^2 / (2*sigma^2))
+    Returns the pressure p(x, t) for a 1D wave equation.
     """
-    x, t = coord
-    sigma = 0.05  # pulse width
-    t0 = 0.3
-
-    # Retarded time
-    t_ret = t - jnp.abs(x) / c
-    t_ret = jnp.maximum(t_ret, 0.0)
-
-    # Analytical integral of Gaussian
-    u = (sigma * jnp.sqrt(jnp.pi / 2) / (2 * c)) * (
-        erf((t_ret - t0) / (jnp.sqrt(2) * sigma)) - erf(-t0 / (jnp.sqrt(2) * sigma))
-    )
-
-    return u * 100  # avoid very small values
+    x, t = x
+    omega = c * k
+    p = A * jnp.sin(k * x - omega * t)
+    return p
 
 
 # generate dataset on a domain
 spatial_discretisation = GridDiscretisationND.discretise_fn(
-    [(0.0, 1.0), (0.0, 1.0)], [256, 256], acoustic_point_source_1d
+    [(0.0, 1.0), (0.0, 1.0)], [256, 256], wave_pressure
 )
 
 #
