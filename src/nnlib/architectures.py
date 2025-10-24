@@ -8,10 +8,11 @@ import jax.random as jrandom
 from jaxtyping import Array, Float, PRNGKeyArray
 
 from nnlib.activations import identity_activation, sin_activation
+from nnlib.misc import default_complex_dtype
 from nnlib.reparametrize import (
     make_is_leaf_of_filter,
     make_nd_array_filter,
-    reparam_model,
+    reparam_pytree,
     siren_bias_initializer,
     siren_weight_initializer,
 )
@@ -395,7 +396,7 @@ def make_siren(
     omega0: float = 30.0,
     use_bias: bool = True,
     use_final_bias: bool = True,
-    dtype=None,
+    dtype=default_complex_dtype(),
     *,
     key: PRNGKeyArray,
 ) -> eqx.nn.MLP:
@@ -437,42 +438,38 @@ def make_siren(
     # make filter functions
     weight_filter = make_nd_array_filter(2)
     bias_filter = make_nd_array_filter(1)
-    is_first = make_is_leaf_of_filter((mlp.layers[0]))
+    is_first = make_is_leaf_of_filter(mlp.layers[0])
     is_other = make_is_leaf_of_filter(mlp.layers[1:])
 
     # re-parameterize weights
-    mlp = reparam_model(
-        mlp,
+    mlp = reparam_pytree(
         lambda x: weight_filter(x) and is_first(x),
         siren_weight_initializer(is_first=True, omega_0=first_omega0),
         dtype,
         key=fst_w_key,
-    )
+    )(mlp)
 
-    mlp = reparam_model(
-        mlp,
+    mlp = reparam_pytree(
         lambda x: weight_filter(x) and is_other(x),
         siren_weight_initializer(is_first=False, omega_0=first_omega0),
         dtype,
         key=snd_w_key,
-    )
+    )(mlp)
 
     # re-parameterize biases
-    mlp = reparam_model(
-        mlp,
+    mlp = reparam_pytree(
         lambda x: bias_filter(x) and is_first(x),
         siren_bias_initializer(is_first=True),
         dtype,
         key=fst_b_key,
-    )
+    )(mlp)
 
-    mlp = reparam_model(
-        mlp,
+    mlp = reparam_pytree(
         lambda x: bias_filter(x) and is_other(x),
         siren_bias_initializer(is_first=False),
         dtype,
         key=snd_b_key,
-    )
+    )(mlp)
 
     return mlp
 
@@ -489,7 +486,7 @@ def make_modified_siren(
     omega0: float = 30.0,
     use_bias: bool = True,
     use_final_bias: bool = True,
-    dtype=None,
+    dtype=default_complex_dtype(),
     *,
     key: PRNGKeyArray,
 ) -> ModifiedMLP:
@@ -534,37 +531,33 @@ def make_modified_siren(
     is_other = make_is_leaf_of_filter(mod_mlp.layers[1:])
 
     # re-parameterize weights
-    mod_mlp = reparam_model(
-        mod_mlp,
+    mod_mlp = reparam_pytree(
         lambda x: weight_filter(x) and is_uv_or_first(x),
         siren_weight_initializer(is_first=True, omega_0=first_omega0),
         dtype,
         key=fst_w_key,
-    )
+    )(mod_mlp)
 
-    mod_mlp = reparam_model(
-        mod_mlp,
+    mod_mlp = reparam_pytree(
         lambda x: weight_filter(x) and is_other(x),
         siren_weight_initializer(is_first=False, omega_0=omega0),
         dtype,
         key=snd_w_key,
-    )
+    )(mod_mlp)
 
     # re-parameterize biases
-    mod_mlp = reparam_model(
-        mod_mlp,
+    mod_mlp = reparam_pytree(
         lambda x: bias_filter(x) and is_uv_or_first(x),
         siren_bias_initializer(is_first=True),
         dtype,
         key=fst_b_key,
-    )
+    )(mod_mlp)
 
-    mod_mlp = reparam_model(
-        mod_mlp,
+    mod_mlp = reparam_pytree(
         lambda x: bias_filter(x) and is_other(x),
         siren_bias_initializer(is_first=False),
         dtype,
         key=snd_b_key,
-    )
+    )(mod_mlp)
 
     return mod_mlp

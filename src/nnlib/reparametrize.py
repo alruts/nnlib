@@ -1,11 +1,11 @@
-from typing import Any, Callable, Optional, Tuple, Union
+from typing import Any, Callable, Sequence
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 from jax.nn import initializers
-from jaxtyping import Array, Complex, Float, PRNGKeyArray, PyTree
+from jaxtyping import Array, DTypeLike, PRNGKeyArray, PyTree
 
 
 def reparametrize_linear(
@@ -63,7 +63,13 @@ def reparametrize_linear(
 
 
 def siren_weight_initializer(omega_0: float, is_first: bool = False):
-    def init(key, shape, dtype=jnp.float32):
+    def init(
+        key: Array,
+        shape: tuple[int, ...],
+        dtype: DTypeLike,
+    ) -> Array:
+        assert dtype is not None, "must provide dtype!"
+
         in_features = shape[-1]
 
         scale = 1.0 / in_features if is_first else jnp.sqrt(6.0 / in_features) / omega_0
@@ -72,7 +78,7 @@ def siren_weight_initializer(omega_0: float, is_first: bool = False):
             scale=scale,
             mode="fan_in",
             distribution="uniform",
-        )(key, shape, dtype)
+        )(key, shape, dtype)  # variance scaling handles complex dtypes
 
     return init
 
@@ -84,7 +90,13 @@ def siren_bias_initializer(is_first: bool = False):
       - Other layers: zeros
     """
 
-    def init(key, shape, dtype=jnp.float32):
+    def init(
+        key: PRNGKeyArray,
+        shape: tuple[int, ...],
+        dtype: DTypeLike,
+    ) -> Array:
+        assert dtype is not None, "must provide dtype!"
+
         if is_first:
             if jnp.issubdtype(dtype, jnp.complexfloating):
                 # Sample random angle theta uniformly in [0, 2π)
@@ -149,34 +161,38 @@ def make_is_leaf_of_filter(pytree: PyTree) -> Callable[[Array], bool]:
     return lambda x: any(x is leaf for leaf in leaves)
 
 
-def reparam_model(model, filter_spec, new_distribution, dtype, *, key):
-    """Re-parameterize model parameters using a new distribution.
+def reparam_pytree(
+    filter_spec: Callable[[Any], bool],
+    new_distribution: initializers.Initializer | Callable,
+    dtype: Any,
+    *,
+    key: PRNGKeyArray,
+):
+    """
+    Return a function that re-parameterizes model parameters using a new distribution.
 
     Args:
-        model: An Equinox model or arbitrary PyTree.
         filter_spec: Boolean function specifying which leaves to reparameterize.
-        new_distribution: Callable with signature (key, shape, dtype) → jnp.ndarray.
-        dtype: Desired dtype for the new parameters.
+        new_distribution: Callable with signature (key, shape, dtype) -> jnp.ndarray.
+        dtype: Desired dtype for new parameters.
         key: JAX PRNGKey used to sample from the new distribution.
 
     Returns:
-        A new model with parameters replaced according to the distribution.
+        A callable that takes a model and returns a new model with updated parameters.
 
     Example:
         >>> import jax
         >>> import jax.numpy as jnp
         >>> import equinox as eqx
-        >>>
         >>> class Simple(eqx.Module):
         ...     weight: jnp.ndarray
         ...     bias: jnp.ndarray
-        >>>
         >>> model = Simple(jnp.ones((2, 2)), jnp.zeros((2,)))
-        >>> def filter_spec(x): return True  # reparametrize all leaves
-        >>> def new_distribution(key, shape, dtype):
-        ...     return jax.random.normal(key, shape, dtype)
+        >>> filter_spec = lambda x: True
+        >>> new_distribution = lambda key, shape, dtype: jax.random.normal(key, shape, dtype)
         >>> key = jax.random.PRNGKey(0)
-        >>> new_model = reparam_model(model, filter_spec, new_distribution, jnp.float32, key=key)
+        >>> reparam = reparam_pytree(filter_spec, new_distribution, jnp.float32, key=key)
+        >>> new_model = reparam(model)
         >>> isinstance(new_model, Simple)
         True
         >>> new_model.weight.shape == model.weight.shape
@@ -184,11 +200,53 @@ def reparam_model(model, filter_spec, new_distribution, dtype, *, key):
         >>> print((new_model.weight == model.weight).all())
         False
     """
-    params, static = eqx.partition(model, filter_spec)
-    leaves, treedef = jax.tree.flatten(params)
-    keys = jax.random.split(key, len(leaves))
-    new_leaves = [
-        new_distribution(k, leaf.shape, dtype) for k, leaf in zip(keys, leaves)
-    ]
-    new_params = jax.tree.unflatten(treedef, new_leaves)
-    return eqx.combine(new_params, static)
+
+    def apply(model: PyTree) -> PyTree:
+        params, static = eqx.partition(model, filter_spec)
+        leaves, treedef = jax.tree.flatten(params)
+        keys = jax.random.split(key, len(leaves))
+        new_leaves = [
+            new_distribution(k, leaf.shape, dtype) for k, leaf in zip(keys, leaves)
+        ]
+        new_params = jax.tree.unflatten(treedef, new_leaves)
+        return eqx.combine(new_params, static)
+
+    return apply
+
+
+def transform_pytree(filter_fn: Callable[[Any], bool], transform_fn: Callable):
+    """
+    Return a function that applies a transformation to selected model parameters.
+
+    Args:
+        filter_fn: Function specifying which leaves to transform (bool-returning).
+        transform_fn: Callable with signature (leaf) -> transformed leaf.
+
+    Returns:
+        A callable that takes a model and returns a new model with transformed parameters.
+
+    Example:
+        >>> import jax.numpy as jnp
+        >>> import equinox as eqx
+        >>> class Simple(eqx.Module):
+        ...     weight: jnp.ndarray
+        ...     bias: jnp.ndarray
+        >>> model = Simple(jnp.ones((2, 2)), jnp.zeros((2,)))
+        >>> filter_fn = lambda x: x.ndim == 2
+        >>> transform_fn = lambda x: 0.5 * x
+        >>> transform = transform_pytree(filter_fn, transform_fn)
+        >>> new_model = transform(model)
+        >>> isinstance(new_model, Simple)
+        True
+        >>> print(jnp.allclose(new_model.weight, 0.5 * model.weight))
+        True
+        >>> print(jnp.allclose(new_model.bias, model.bias))
+        True
+    """
+
+    def apply(model: PyTree) -> PyTree:
+        params, static = eqx.partition(model, filter_fn)
+        transformed_params = jax.tree.map(transform_fn, params)
+        return eqx.combine(transformed_params, static)
+
+    return apply

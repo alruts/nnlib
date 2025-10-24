@@ -46,17 +46,15 @@ def pde_loss(
 
 def impedance_loss(
     params: PyTree,
-    model: WavePINN,
+    model: HelmholtzPINN,
     impedance_params: PyTree,
-    impedance_model: Callable,  # callable pytree
+    impedance_model: Callable,
     coords: tuple[Array],
     normals: tuple[Array],
     criterion: Callable = aggregated_metrics["mse"],
 ) -> float:
     # I have separate models for the impedance and the sound field
     # In the ...
-
-    # the pressure at the boundary surely will give me the waveform??
 
     n_dim = len(coords)
 
@@ -73,7 +71,8 @@ def impedance_loss(
     pred = p_pred / vn_pred
 
     # impedance model prediction
-    impedance_model_pred = ...
+    impedance_model_pred = impedance_model(params, *coords)
+    # impedance_model_pred = convert to pressure?
 
     return criterion(pred, impedance_model_pred)  # error measure
 
