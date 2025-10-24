@@ -10,7 +10,6 @@ from nnlib import feature_maps
 from nnlib.activations import (
     split_tanh,
 )
-from nnlib.complex_soap import soap
 from nnlib.data_utils import (
     DataPointSampler,
     UniformSampler,
@@ -151,6 +150,7 @@ for arch, emb in setup:
 
     # Extract the trainable parameters of the neural-net as a `PyTree`
     params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
+    params = jax.tree.map(lambda x: x / jnp.sqrt(2), params)  # scaling due to complex
 
     # Initialize the adam optimizer with learning rate scheduler
     learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
