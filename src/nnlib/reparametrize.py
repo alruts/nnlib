@@ -4,6 +4,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
+from jax.nn import initializers
 from jaxtyping import Array, Complex, Float, PRNGKeyArray, PyTree
 
 
@@ -14,7 +15,7 @@ def reparametrize_linear(
     *,
     key: PRNGKeyArray,
 ) -> eqx.nn.Linear:
-    """Reparametrize a Linear layer's weights (and bias).
+    """Re-parameterize a Linear layer's weights (and bias).
 
     Example:
         >>> import jax
@@ -61,71 +62,45 @@ def reparametrize_linear(
     return new_layer
 
 
-def siren_weight_dist(
-    key: PRNGKeyArray,
-    shape: tuple[int, ...],
-    dtype: Float | Complex,
-    *,
-    omega_0: float,
-    is_first: bool = False,
-) -> jnp.ndarray:
-    """SIREN initialization distribution for weights.
+def siren_weight_initializer(omega_0: float, is_first: bool = False):
+    def init(key, shape, dtype=jnp.float32):
+        in_features = shape[-1]
 
-    Args:
-        shape: (out_features, in_features)
-        omega_0: frequency scaling parameter
-        is_first: whether this is the first layer
-        key: JAX PRNG key
-        dtype: optional JAX dtype (if complex, initializes complex weights)
+        scale = 1.0 / in_features if is_first else jnp.sqrt(6.0 / in_features) / omega_0
+
+        return initializers.variance_scaling(
+            scale=scale,
+            mode="fan_in",
+            distribution="uniform",
+        )(key, shape, dtype)
+
+    return init
+
+
+def siren_bias_initializer(is_first: bool = False):
     """
-    out_features, in_features = shape
+    SIREN bias initializer:
+      - First layer: uniform [-1, 1] for real, unit circle for complex
+      - Other layers: zeros
+    """
 
-    if is_first:
-        lim = 1.0 / in_features
-    else:
-        lim = jnp.sqrt(6.0 / in_features) / omega_0
+    def init(key, shape, dtype=jnp.float32):
+        if is_first:
+            if jnp.issubdtype(dtype, jnp.complexfloating):
+                # Sample random angle theta uniformly in [0, 2π)
+                theta = jrandom.uniform(
+                    key, shape, dtype=jnp.float32, minval=0.0, maxval=2 * jnp.pi
+                )
+                r = jrandom.uniform(
+                    key, shape, dtype=jnp.float32, minval=0.0, maxval=1.0
+                )
+                return r * jnp.exp(1j * theta).astype(dtype)  # unit circle
+            else:
+                return jrandom.uniform(key, shape, dtype=dtype, minval=-1.0, maxval=1.0)
+        else:
+            return jnp.zeros(shape, dtype)
 
-    weights = jrandom.uniform(key, (out_features, in_features), minval=-lim, maxval=lim)
-
-    # handle complex-valued case
-    if dtype is not None and jnp.issubdtype(dtype, jnp.complexfloating):
-        lim /= jnp.sqrt(2.0)  # half the variance
-        re_key, im_key = jrandom.split(key)
-
-        re_weights = jrandom.uniform(
-            re_key, (out_features, in_features), minval=-lim, maxval=lim
-        )
-        im_weights = jrandom.uniform(
-            im_key, (out_features, in_features), minval=-lim, maxval=lim
-        )
-        weights = re_weights + 1j * im_weights
-
-    return weights
-
-
-def siren_bias_dist(
-    key: PRNGKeyArray,
-    shape: tuple[int, ...],
-    dtype: Float | Complex,
-    *,
-    is_first: bool = False,
-) -> Array:
-    """SIREN initialization distribution for biases."""
-    if is_first:
-        lim = 1.0
-        biases = jrandom.uniform(key, shape, minval=-lim, maxval=lim)
-    else:
-        biases = jnp.zeros(shape, dtype)
-
-    # handle complex-valued case
-    if dtype is not None and jnp.issubdtype(dtype, jnp.complexfloating):
-        lim = 1.0
-        re_key, im_key = jrandom.split(key)
-        re_biases = jrandom.uniform(re_key, shape, minval=-lim, maxval=lim)
-        im_biases = jrandom.uniform(im_key, shape, minval=-lim, maxval=lim)
-        biases = re_biases + 1j * im_biases
-
-    return biases
+    return init
 
 
 def make_nd_array_filter(n: int) -> Callable[[Array], bool]:
@@ -192,25 +167,20 @@ def reparam_model(model, filter_spec, new_distribution, dtype, *, key):
         >>> import jax.numpy as jnp
         >>> import equinox as eqx
         >>>
-
         >>> class Simple(eqx.Module):
         ...     weight: jnp.ndarray
         ...     bias: jnp.ndarray
         >>>
-
         >>> model = Simple(jnp.ones((2, 2)), jnp.zeros((2,)))
         >>> def filter_spec(x): return True  # reparametrize all leaves
         >>> def new_distribution(key, shape, dtype):
         ...     return jax.random.normal(key, shape, dtype)
-
         >>> key = jax.random.PRNGKey(0)
         >>> new_model = reparam_model(model, filter_spec, new_distribution, jnp.float32, key=key)
         >>> isinstance(new_model, Simple)
         True
-
         >>> new_model.weight.shape == model.weight.shape
         True
-
         >>> print((new_model.weight == model.weight).all())
         False
     """

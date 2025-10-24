@@ -12,8 +12,8 @@ from nnlib.reparametrize import (
     make_is_leaf_of_filter,
     make_nd_array_filter,
     reparam_model,
-    siren_bias_dist,
-    siren_weight_dist,
+    siren_bias_initializer,
+    siren_weight_initializer,
 )
 
 
@@ -444,7 +444,7 @@ def make_siren(
     mlp = reparam_model(
         mlp,
         lambda x: weight_filter(x) and is_first(x),
-        partial(siren_weight_dist, is_first=True, omega_0=first_omega0),
+        siren_weight_initializer(is_first=True, omega_0=first_omega0),
         dtype,
         key=fst_w_key,
     )
@@ -452,7 +452,7 @@ def make_siren(
     mlp = reparam_model(
         mlp,
         lambda x: weight_filter(x) and is_other(x),
-        partial(siren_weight_dist, is_first=False, omega_0=omega0),
+        siren_weight_initializer(is_first=False, omega_0=first_omega0),
         dtype,
         key=snd_w_key,
     )
@@ -461,7 +461,7 @@ def make_siren(
     mlp = reparam_model(
         mlp,
         lambda x: bias_filter(x) and is_first(x),
-        partial(siren_bias_dist, is_first=True),
+        siren_bias_initializer(is_first=True),
         dtype,
         key=fst_b_key,
     )
@@ -469,7 +469,7 @@ def make_siren(
     mlp = reparam_model(
         mlp,
         lambda x: bias_filter(x) and is_other(x),
-        partial(siren_bias_dist, is_first=False),
+        siren_bias_initializer(is_first=False),
         dtype,
         key=snd_b_key,
     )
@@ -537,7 +537,7 @@ def make_modified_siren(
     mod_mlp = reparam_model(
         mod_mlp,
         lambda x: weight_filter(x) and is_uv_or_first(x),
-        partial(siren_weight_dist, is_first=True, omega_0=first_omega0),
+        siren_weight_initializer(is_first=True, omega_0=first_omega0),
         dtype,
         key=fst_w_key,
     )
@@ -545,7 +545,7 @@ def make_modified_siren(
     mod_mlp = reparam_model(
         mod_mlp,
         lambda x: weight_filter(x) and is_other(x),
-        partial(siren_weight_dist, is_first=False, omega_0=omega0),
+        siren_weight_initializer(is_first=False, omega_0=omega0),
         dtype,
         key=snd_w_key,
     )
@@ -554,7 +554,7 @@ def make_modified_siren(
     mod_mlp = reparam_model(
         mod_mlp,
         lambda x: bias_filter(x) and is_uv_or_first(x),
-        partial(siren_bias_dist, is_first=True),
+        siren_bias_initializer(is_first=True),
         dtype,
         key=fst_b_key,
     )
@@ -562,7 +562,7 @@ def make_modified_siren(
     mod_mlp = reparam_model(
         mod_mlp,
         lambda x: bias_filter(x) and is_other(x),
-        partial(siren_bias_dist, is_first=False),
+        siren_bias_initializer(is_first=False),
         dtype,
         key=snd_b_key,
     )

@@ -1,4 +1,4 @@
-from typing import Callable, Literal
+from typing import Callable, Literal, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax
@@ -26,6 +26,19 @@ arch_lib = {
     "siren": make_siren,
     "pirate_net": PirateNet,
 }
+
+
+# Define a protocol for acoustics PINN-like object
+@runtime_checkable
+class AcousticPINNProtocol(Protocol):
+    model: eqx.Module | Callable
+    wave_speed: float
+    medium_density: float
+
+    def p_net(self, params: PyTree, *args: Float) -> Float | Complex: ...
+    def r_net(self, params: PyTree, *args: Float) -> Float | Complex: ...
+    def v_net(self, params: PyTree, *args: Float, **kwargs) -> Float | Complex: ...
+    def z_net(self, params: PyTree, *args: Float, **kwargs) -> Float | Complex: ...
 
 
 class WavePINN(eqx.Module):
@@ -172,7 +185,8 @@ class WavePINN(eqx.Module):
         if solution.ys is not None:
             int_p_dt = solution.ys.squeeze()
             return -1.0 / self.medium_density * int_p_dt
-        return ValueError("Numerical integration failed :(")
+        else:
+            return RuntimeError("Numerical integration failed :(")
 
     def z_net(self, params: PyTree, *args: Float) -> Float:
         """
