@@ -130,7 +130,7 @@ def siren_bias_dist(
 
 def make_nd_array_filter(n: int) -> Callable[[Array], bool]:
     """
-    Return a function that checks if an array is a valid n-dimensional array.
+    Return a function that checks if an array is n-dimensional.
 
     Example
         >>> import jax.numpy as jnp
@@ -153,12 +153,67 @@ def make_nd_array_filter(n: int) -> Callable[[Array], bool]:
 
 
 def make_is_leaf_of_filter(pytree: PyTree) -> Callable[[Array], bool]:
-    """ """
+    """
+    Return a function that checks if an array is a leaf of the given PyTree.
+
+    Example:
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> pytree = {"a": jnp.array([1.0, 2.0]), "b": (jnp.array([3.0]), 4)}
+        >>> is_leaf = make_is_leaf_of_filter(pytree)
+        >>> leaf_a = pytree["a"]
+        >>> leaf_b = pytree["b"][0]
+        >>> is_leaf(leaf_a)
+        True
+        >>> is_leaf(leaf_b)
+        True
+        >>> is_leaf(jnp.array([99.0]))
+        False
+    """
     leaves = jax.tree.leaves(pytree)
     return lambda x: any(x is leaf for leaf in leaves)
 
 
 def reparam_model(model, filter_spec, new_distribution, dtype, *, key):
+    """Re-parameterize model parameters using a new distribution.
+
+    Args:
+        model: An Equinox model or arbitrary PyTree.
+        filter_spec: Boolean function specifying which leaves to reparameterize.
+        new_distribution: Callable with signature (key, shape, dtype) → jnp.ndarray.
+        dtype: Desired dtype for the new parameters.
+        key: JAX PRNGKey used to sample from the new distribution.
+
+    Returns:
+        A new model with parameters replaced according to the distribution.
+
+    Example:
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> import equinox as eqx
+        >>>
+
+        >>> class Simple(eqx.Module):
+        ...     weight: jnp.ndarray
+        ...     bias: jnp.ndarray
+        >>>
+
+        >>> model = Simple(jnp.ones((2, 2)), jnp.zeros((2,)))
+        >>> def filter_spec(x): return True  # reparametrize all leaves
+        >>> def new_distribution(key, shape, dtype):
+        ...     return jax.random.normal(key, shape, dtype)
+
+        >>> key = jax.random.PRNGKey(0)
+        >>> new_model = reparam_model(model, filter_spec, new_distribution, jnp.float32, key=key)
+        >>> isinstance(new_model, Simple)
+        True
+
+        >>> new_model.weight.shape == model.weight.shape
+        True
+
+        >>> print((new_model.weight == model.weight).all())
+        False
+    """
     params, static = eqx.partition(model, filter_spec)
     leaves, treedef = jax.tree.flatten(params)
     keys = jax.random.split(key, len(leaves))
