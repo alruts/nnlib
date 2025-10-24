@@ -90,12 +90,16 @@ class GridDiscretisationND(eqx.Module):
         )
 
     @property
-    def coordinate_arrays(self):
+    def linspaces(self):
         axes = [
             jnp.linspace(start, end, num)
             for (start, end), num in zip(self.bounds, self.vals.shape)
         ]
-        return tuple(jnp.meshgrid(*axes, indexing="ij"))
+        return tuple(axes)
+
+    @property
+    def coordinate_arrays(self):
+        return tuple(jnp.meshgrid(*self.linspaces, indexing="ij"))
 
     def locate_closest(self, point: Point):
         """

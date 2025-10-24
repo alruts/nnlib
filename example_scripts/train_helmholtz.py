@@ -10,6 +10,7 @@ from nnlib import feature_maps
 from nnlib.activations import (
     split_tanh,
 )
+from nnlib.complex_soap import soap
 from nnlib.data_utils import (
     DataPointSampler,
     UniformSampler,
@@ -23,9 +24,9 @@ from nnlib.losses import (
     compute_weights,
     data_loss,
     pde_loss,
-    point_wise_metrics,
     update_weights,
 )
+from nnlib.metrics import point_wise_metrics
 from nnlib.misc import (
     default_complex_dtype,
     default_wave_speed,
@@ -37,22 +38,15 @@ from nnlib.pinn import HelmholtzPINN
 
 seed_key = jrandom.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
+
 #
 # Construct infinite data generators for PDE collocation points
 # and to load random batches of data points
 #
-
-FREQUENCY = 5
-A = 1 - 1 * 1j
+FREQUENCY = 10
 
 
-##
-import warnings
-
-# warnings.filterwarnings("error")
-
-
-def point_source(x, x0=jnp.array([1.0, 1.0]), f=FREQUENCY):
+def point_source(x, x0=jnp.array([1.0, 1.0]), A=1 + 1j, f=FREQUENCY):
     R = jnp.sqrt(jnp.sum(jnp.abs(x - x0) ** 2))
     k = (2 * jnp.pi * f) / default_wave_speed()
     return A * (jnp.exp(-1j * k * R) / R)

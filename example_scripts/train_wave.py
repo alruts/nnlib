@@ -1,9 +1,11 @@
 import pickle
+from functools import partial
 from pathlib import Path
 
 import equinox as eqx
 import jax
 import optax
+from diffrax import SaveAt
 from jax import numpy as jnp
 from jax import random as jrandom
 from matplotlib import pyplot as plt
@@ -48,11 +50,11 @@ dataset = DataPointSampler(
         num_points=256,
         key=subsample_key,
     ),  # returns `PointCloud` with all samples
-    batch_size=1024,
+    batch_size=64,
     key=data_key,
 )
 
-domain_sampler = UniformSampler([(-1, 1), (-1, 1)], batch_size=4096, key=dom_key)
+domain_sampler = UniformSampler([(-1, 1), (-1, 1)], batch_size=1024, key=dom_key)
 
 # These are infinitely iterable
 infinite_dataloader = iter(dataset)
@@ -100,6 +102,18 @@ def compute_pressure(params, pinn):
     return p(params, X, T)
 
 
+def compute_velocity(params, pinn):
+    """Evaluates velocity over the same grid as original dataset."""
+    xs, ts = data.linspaces
+
+    # save at ts
+    v_fn = partial(pinn.v_net, saveat=SaveAt(ts=ts))
+
+    # vectorize over xs
+    vx = jax.vmap(v_fn, in_axes=(None, 0, None, None))
+    return vx(params, xs, jnp.max(ts), 1.0)
+
+
 # Helper to make plots for logging
 def plot_pred(pressure):
     fig = plt.figure(figsize=(6, 5))
@@ -138,6 +152,8 @@ for arch, emb in setup:
     # Extract the trainable parameters of the neural-net as a `PyTree`
     params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
 
+    # half the weights for
+
     # Initialize the Adam optimizer with learning rate scheduler
     learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
     # optimizer = optax.adam(learning_rate)
@@ -174,7 +190,7 @@ for arch, emb in setup:
     # Training loop: all the optimization work is done here + logging
     #
 
-    total_steps = int(40e3)
+    total_steps = int(40e3) + 1
     for step, data_batch, pde_batch in tqdm(
         zip(range(total_steps), infinite_dataloader, infinite_point_generator),
         total=total_steps,
@@ -206,5 +222,8 @@ for arch, emb in setup:
             pred = compute_pressure(params, pinn)
             pred_error = jnp.mean(jnp.square(data.vals - pred))
 
+            velocity_pred = compute_velocity(params, pinn)
+
             logger.log_scalar("error/mse", pred_error, step)
-            logger.log_plot("plots/pred", plot_pred, pred, step)
+            logger.log_plot("plots/pred_p", plot_pred, pred, step)
+            logger.log_plot("plots/pred_v", plot_pred, velocity_pred, step)
