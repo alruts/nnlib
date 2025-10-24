@@ -5,49 +5,13 @@ import jax.numpy as jnp
 from equinox import filter_jit
 from jaxtyping import Array, PyTree
 
-from nnlib.pinn import WavePINN
-
-point_wise_metrics = {
-    # Element-wise error maps
-    "abs_err": lambda p_ref, p_pred: jnp.abs(p_pred - p_ref),
-    "sq_err": lambda p_ref, p_pred: (p_pred - p_ref) ** 2,
-    "rel_err": lambda p_ref, p_pred, eps=1e-8: jnp.abs(p_pred - p_ref)
-    / (jnp.abs(p_ref) + jnp.abs(p_pred) + eps),
-    "log_err": lambda p_ref, p_pred: jnp.abs(
-        jnp.log1p(jnp.abs(p_ref)) - jnp.log1p(jnp.abs(p_pred))
-    ),
-    "diff": lambda p_ref, p_pred: p_pred - p_ref,
-}
-
-aggregated_metrics = {
-    "mse": lambda p_ref, p_pred: jnp.mean((p_pred - p_ref) ** 2),
-    "rmse": lambda p_ref, p_pred: jnp.sqrt(jnp.mean((p_pred - p_ref) ** 2)),
-    "mae": lambda p_ref, p_pred: jnp.mean(jnp.abs(p_pred - p_ref)),
-    "nrmse_range": lambda p_ref, p_pred, eps=1e-8: (
-        jnp.sqrt(jnp.mean((p_pred - p_ref) ** 2)) / (p_ref.max() - p_ref.min() + eps)
-    ),
-    "nrmse_std": lambda p_ref, p_pred, eps=1e-8: (
-        jnp.sqrt(jnp.mean((p_pred - p_ref) ** 2)) / (jnp.std(p_ref) + eps)
-    ),
-    "mean_rel_err": lambda p_ref, p_pred, eps=1e-8: (
-        jnp.mean(jnp.abs(p_pred - p_ref) / (jnp.abs(p_ref) + jnp.abs(p_pred) + eps))
-    ),
-    "split_mse": lambda x, y, axis=None: jnp.mean(
-        (x.real - y.real) ** 2 + (x.imag - y.imag) ** 2, axis=axis
-    ).real,
-    "split_mae": lambda x, y, axis=None: jnp.mean(
-        jnp.abs(x.real - y.real) + jnp.abs(x.imag - y.imag), axis=axis
-    ).real,
-    "mag_phase": lambda x, y, axis=None, alpha=1.0, beta=1.0: (
-        alpha * jnp.mean((jnp.abs(x) - jnp.abs(y)) ** 2, axis=axis)
-        + beta * jnp.mean(jnp.angle(jnp.exp(1j * (x - y))) ** 2, axis=axis)
-    ),
-}
+from nnlib.metrics import aggregated_metrics
+from nnlib.pinn import HelmholtzPINN, WavePINN
 
 
 def data_loss(
     params: PyTree,
-    model: WavePINN,
+    model: WavePINN | HelmholtzPINN,
     coords_vals: tuple[Array],
     criterion: Callable = aggregated_metrics["mse"],
 ) -> float:
@@ -100,7 +64,7 @@ def impedance_loss(
     batched_p_net = jax.vmap(model.r_net, in_axes=(None, *[0] * n_dim))
     parallel_p_net = jax.pmap(batched_p_net, in_axes=(None, *[0] * n_dim))
 
-    batched_vn_net = jax.vmap(model.vn_net, in_axes=(None, *[0] * n_dim * 2))
+    batched_vn_net = jax.vmap(model.v_net, in_axes=(None, *[0] * n_dim * 2))
     parallel_vn_net = jax.pmap(batched_vn_net, in_axes=(None, *[0] * n_dim * 2))
 
     # make pinn prediction
@@ -129,22 +93,6 @@ def compute_loss(
     }
     total_loss = jax.tree.reduce(lambda x, y: x + y, computed_losses)
     return total_loss, computed_losses
-
-
-def make_loss(data_loss: Callable, criterion: Callable):
-    """
-    Returns a new loss function with the given criterion partially applied
-    to the provided data_loss function.
-
-    Usage:
-        loss_fn = make_loss(data_loss, criteria["mse"])
-        value = loss_fn(params, model, coords_vals)
-    """
-
-    def loss_fn(params: PyTree, model, coords_vals: tuple[Array]) -> float:
-        return data_loss(params, model, coords_vals, criterion=criterion)
-
-    return loss_fn
 
 
 def compute_weighted_loss(
