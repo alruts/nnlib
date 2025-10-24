@@ -3,7 +3,7 @@ from typing import Callable, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from diffrax import Dopri5, ODETerm, SaveAt, TqdmProgressMeter, diffeqsolve
+from diffrax import Dopri5, ODETerm, SaveAt, diffeqsolve
 from jaxtyping import Complex, Float, PyTree
 
 from nnlib.architectures import (
@@ -115,11 +115,12 @@ class WavePINN(eqx.Module):
     def v_net(self, params: PyTree, *args: Float, saveat=SaveAt(t1=True)) -> Float:
         """Computation of PDE residual for variable spatial dimensions.
 
-        Args:
+        Arguments:
             params: Model parameters
-            *args: (coords..., normal...) where
-                coords = spatial coordinates (x, y, ..., t)
-                normal = unit normal vector components with no time entry (nx, ny, ...)
+            *args: (coordinates..., tangents...) where
+                coordinates = spatial coordinates (x, y, z, ...)
+                tangents = unit normal vector components (nx, ny, nz, ...)
+
             saveat: specify time steps to return see `diffrax.SaveAt`. Defaults to t.
 
         >>> plane_wave = lambda x: jnp.sin(x[1] - x[0])
@@ -177,11 +178,11 @@ class WavePINN(eqx.Module):
         """
         Compute directional impedance normalized to the medium.
 
-        Args:
+        Arguments:
             params: Model parameters
-            *args: (coords..., normal...) where
-                coords = spatial coordinates (x, y, ..., t)
-                normal = unit normal vector components with no time entry (nx, ny, ...)
+            *args: (coordinates..., tangents...) where
+                coordinates = spatial coordinates (x, y, z, ...)
+                tangents = unit normal vector components (nx, ny, nz, ...)
             saveat: specify time steps to return see `diffrax.SaveAt`. Defaults to t.
         """
         ndim = len(args) // 2
@@ -289,11 +290,11 @@ class HelmholtzPINN(eqx.Module):
         """
         Compute directional velocity via Euler's equation of motion.
 
-        Args:
+        Arguments:
             params: Model parameters
-            *args: (coords..., normal...) where
-                coords = spatial coordinates (x, y, z, ...)
-                normal = unit normal vector components (nx, ny, nz, ...)
+            *args: (coordinates..., tangents...) where
+                coordinates = spatial coordinates (x, y, z, ...)
+                tangents = unit normal vector components (nx, ny, nz, ...)
 
         Validation with a simple analytic model:
             >>> import jax.numpy as jnp
@@ -328,14 +329,16 @@ class HelmholtzPINN(eqx.Module):
         """
         Compute directional impedance normalized to the medium.
 
-        Args:
+        Arguments:
             params: Model parameters
-            *args: (coords..., normal...) where
-                coords = spatial coordinates (x, y, z, ...)
-                normal = unit normal vector components (nx, ny, nz, ...)
+            *args: (coordinates..., tangents...) where
+                coordinates = spatial coordinates (x, y, z, ...)
+                tangents = unit normal vector components (nx, ny, nz, ...)
+
         """
         ndim = len(args) // 2
         coords = args[:ndim]
 
         Z = self.p_net(params, *coords) / self.v_net(params, *args)
+
         return Z / (self.medium_density * self.wave_speed)

@@ -1,10 +1,10 @@
-from typing import Callable, Optional
+from typing import Any, Callable, Optional, Tuple, Union
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jrandom
-from jax import Array
-from jaxtyping import PRNGKeyArray
+from jaxtyping import Array, Complex, Float, PRNGKeyArray, PyTree
 
 
 def reparametrize_linear(
@@ -62,12 +62,12 @@ def reparametrize_linear(
 
 
 def siren_weight_dist(
-    shape: tuple[int, ...],
-    omega_0: float,
-    *,
-    is_first: bool = False,
     key: PRNGKeyArray,
-    dtype: Optional[jnp.dtype] = None,
+    shape: tuple[int, ...],
+    dtype: Float | Complex,
+    *,
+    omega_0: float,
+    is_first: bool = False,
 ) -> jnp.ndarray:
     """SIREN initialization distribution for weights.
 
@@ -104,11 +104,11 @@ def siren_weight_dist(
 
 
 def siren_bias_dist(
+    key: PRNGKeyArray,
     shape: tuple[int, ...],
+    dtype: Float | Complex,
     *,
     is_first: bool = False,
-    key: PRNGKeyArray,
-    dtype: Optional[jnp.dtype] = None,
 ) -> Array:
     """SIREN initialization distribution for biases."""
     if is_first:
@@ -128,25 +128,42 @@ def siren_bias_dist(
     return biases
 
 
-def is_nd_array(x: Array, *, n: int) -> bool:
+def make_nd_array_filter(n: int) -> Callable[[Array], bool]:
     """
-    Check if `x` is a 2D array suitable as a neural network weight matrix.
-
-    A valid weight matrix is typically a 2D array of shape (out_features, in_features).
+    Return a function that checks if an array is a valid n-dimensional array.
 
     Example
-        >>> # Linear layer weights with shape (3, 4)
+        >>> import jax.numpy as jnp
+        >>> import equinox as eqx
+        >>> is_2d_array = make_nd_array_filter(2)
         >>> W = jnp.array([[0.1, 0.2, 0.3, 0.4],
         ...                [0.5, 0.6, 0.7, 0.8],
         ...                [0.9, 1.0, 1.1, 1.2]])
-        >>> is_nd_array(W, n=2)
+        >>> is_2d_array(W)
         True
 
-        >>> # Bias vector (1D) should return False
+        >>> is_1d_array = make_nd_array_filter(1)
         >>> b = jnp.array([0.1, 0.2, 0.3])
-        >>> is_nd_array(b, n=2)
+        >>> is_2d_array(b)
         False
-        >>> is_nd_array(b, n=1)
+        >>> is_1d_array(b)
         True
     """
-    return eqx.is_array(x) and len(x.shape) == n
+    return lambda x: eqx.is_array(x) and len(x.shape) == n
+
+
+def make_is_leaf_of_filter(pytree: PyTree) -> Callable[[Array], bool]:
+    """ """
+    leaves = jax.tree.leaves(pytree)
+    return lambda x: any(x is leaf for leaf in leaves)
+
+
+def reparam_model(model, filter_spec, new_distribution, dtype, *, key):
+    params, static = eqx.partition(model, filter_spec)
+    leaves, treedef = jax.tree.flatten(params)
+    keys = jax.random.split(key, len(leaves))
+    new_leaves = [
+        new_distribution(k, leaf.shape, dtype) for k, leaf in zip(keys, leaves)
+    ]
+    new_params = jax.tree.unflatten(treedef, new_leaves)
+    return eqx.combine(new_params, static)

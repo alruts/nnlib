@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Callable, Literal
 
 import equinox as eqx
@@ -8,13 +9,72 @@ from jaxtyping import Array, Float, PRNGKeyArray
 
 from nnlib.activations import identity_activation, sin_activation
 from nnlib.reparametrize import (
-    reparametrize_linear,
+    make_is_leaf_of_filter,
+    make_nd_array_filter,
+    reparam_model,
     siren_bias_dist,
     siren_weight_dist,
 )
 
 
-class ModifiedMLP(eqx.nn.MLP):
+class MLPWithFirstActivation(eqx.nn.MLP):
+    """MLP allowing a separate first-layer activation."""
+
+    first_activation: Callable
+
+    def __init__(
+        self,
+        in_size: int | Literal["scalar"],
+        out_size: int | Literal["scalar"],
+        width_size: int,
+        depth: int,
+        activation: Callable = jax.nn.relu,
+        first_activation: Callable = jax.nn.relu,
+        final_activation: Callable = jax.nn.identity,
+        use_bias: bool = True,
+        use_final_bias: bool = True,
+        dtype=None,
+        *,
+        key: PRNGKeyArray,
+    ):
+        """
+        Arguments the same as MLP, with an extra:
+        - `first_activation`: Activation to use after the first layer. Defaults to `activation` if None.
+        """
+        super().__init__(
+            in_size,
+            out_size,
+            width_size,
+            depth,
+            activation=activation,
+            final_activation=final_activation,
+            use_bias=use_bias,
+            use_final_bias=use_final_bias,
+            dtype=dtype,
+            key=key,
+        )
+        self.first_activation = first_activation
+
+    def __call__(self, x: Array, *, key: PRNGKeyArray | None = None) -> Array:
+        # Apply first layer + first_activation
+        x = self.layers[0](x)
+        x = eqx.filter_vmap(lambda a, b: a(b))(self.first_activation, x)
+
+        # Apply remaining layers + regular activation
+        for layer in self.layers[1:-1]:
+            x = layer(x)
+            x = eqx.filter_vmap(lambda a, b: a(b))(self.activation, x)
+
+        # Apply final layer
+        x = self.layers[-1](x)
+        if self.out_size == "scalar":
+            x = self.final_activation(x)
+        else:
+            x = eqx.filter_vmap(lambda a, b: a(b))(self.final_activation, x)
+        return x
+
+
+class ModifiedMLP(MLPWithFirstActivation):
     """
     A podified multi-layer perceptron (MLP) from [1] that applies learned linear
     modulators `u` and `v` to the hidden layers before the final output.
@@ -50,8 +110,9 @@ class ModifiedMLP(eqx.nn.MLP):
         out_size: int | Literal["scalar"],
         width_size: int,
         depth: int,
-        activation: Callable = jax.nn.tanh,
-        final_activation: Callable = identity_activation,
+        activation: Callable = jax.nn.relu,
+        first_activation: Callable = jax.nn.relu,
+        final_activation: Callable = jax.nn.identity,
         use_bias: bool = True,
         use_final_bias: bool = True,
         dtype=None,
@@ -66,6 +127,7 @@ class ModifiedMLP(eqx.nn.MLP):
             width_size=width_size,
             depth=depth,
             activation=activation,
+            first_activation=first_activation,
             final_activation=final_activation,
             use_bias=use_bias,
             use_final_bias=use_final_bias,
@@ -86,11 +148,16 @@ class ModifiedMLP(eqx.nn.MLP):
 
     def __call__(self, x: Array, *, key: PRNGKeyArray | None = None) -> Array:
         """Forward pass."""
+        # u and v
+        u = self.first_activation(self.u(x))
+        v = self.first_activation(self.v(x))
 
-        u = self.activation(self.u(x))
-        v = self.activation(self.v(x))
+        # first layer
+        x = self.first_activation(self.layers[0](x))
+        x = x * u + (1 - x) * v
 
-        for layer in self.layers[:-1]:
+        # middle layers
+        for layer in self.layers[1:-1]:
             x = self.activation(layer(x))
             x = x * u + (1 - x) * v
 
@@ -324,10 +391,11 @@ def make_siren(
     depth: int,
     activation: Callable = sin_activation,
     final_activation: Callable = identity_activation,
+    first_omega0: float = 30.0,
+    omega0: float = 30.0,
     use_bias: bool = True,
     use_final_bias: bool = True,
     dtype=None,
-    angular_frequency=30.0,
     *,
     key: PRNGKeyArray,
 ) -> eqx.nn.MLP:
@@ -350,16 +418,15 @@ def make_siren(
     Functions." arXiv, Jun. 17, 2020. Accessed: Mar. 08, 2024. [Online].
     Available: http://arxiv.org/abs/2006.09661
     """
-    keys = jrandom.split(key, depth + 3)
-    mlp_key, *keys = keys
-    key_iter = iter(keys)
+    mlp_key, fst_w_key, snd_w_key, fst_b_key, snd_b_key = jrandom.split(key, 5)
 
-    mlp = eqx.nn.MLP(
+    mlp = MLPWithFirstActivation(
         in_size=in_size,
         out_size=out_size,
         width_size=width_size,
         depth=depth,
-        activation=lambda x: activation(x, angular_frequency),
+        activation=partial(activation, angular_frequency=omega0),
+        first_activation=partial(activation, angular_frequency=first_omega0),
         final_activation=final_activation,
         use_bias=use_bias,
         use_final_bias=use_final_bias,
@@ -367,32 +434,45 @@ def make_siren(
         key=mlp_key,
     )
 
-    first_layer = reparametrize_linear(
-        mlp.layers[0],
-        weight_dist=lambda k, s: siren_weight_dist(
-            s, omega_0=angular_frequency, is_first=True, dtype=dtype, key=k
-        ),
-        bias_dist=lambda k, s: siren_bias_dist(s, is_first=True, dtype=dtype, key=k),
-        key=next(key_iter),
+    # make filter functions
+    weight_filter = make_nd_array_filter(2)
+    bias_filter = make_nd_array_filter(1)
+    is_first = make_is_leaf_of_filter((mlp.layers[0]))
+    is_other = make_is_leaf_of_filter(mlp.layers[1:])
+
+    # re-parameterize weights
+    mlp = reparam_model(
+        mlp,
+        lambda x: weight_filter(x) and is_first(x),
+        partial(siren_weight_dist, is_first=True, omega_0=first_omega0),
+        dtype,
+        key=fst_w_key,
     )
 
-    other_layers = (
-        reparametrize_linear(
-            layer,
-            weight_dist=lambda k, s: siren_weight_dist(
-                s, omega_0=angular_frequency, is_first=True, dtype=dtype, key=k
-            ),
-            bias_dist=lambda k, s: siren_bias_dist(
-                s, is_first=False, dtype=dtype, key=k
-            ),
-            key=next(key_iter),
-        )
-        for layer in mlp.layers[1:]
+    mlp = reparam_model(
+        mlp,
+        lambda x: weight_filter(x) and is_other(x),
+        partial(siren_weight_dist, is_first=False, omega_0=omega0),
+        dtype,
+        key=snd_w_key,
     )
 
-    # model surgery
-    for idx, new_layer in enumerate([first_layer, *other_layers]):
-        mlp = eqx.tree_at(lambda m: m.layers[idx], mlp, new_layer)
+    # re-parameterize biases
+    mlp = reparam_model(
+        mlp,
+        lambda x: bias_filter(x) and is_first(x),
+        partial(siren_bias_dist, is_first=True),
+        dtype,
+        key=fst_b_key,
+    )
+
+    mlp = reparam_model(
+        mlp,
+        lambda x: bias_filter(x) and is_other(x),
+        partial(siren_bias_dist, is_first=False),
+        dtype,
+        key=snd_b_key,
+    )
 
     return mlp
 
@@ -403,11 +483,13 @@ def make_modified_siren(
     width_size: int,
     depth: int,
     activation: Callable = sin_activation,
+    first_activation: Callable = sin_activation,
     final_activation: Callable = identity_activation,
+    first_omega0: float = 30.0,
+    omega0: float = 30.0,
     use_bias: bool = True,
     use_final_bias: bool = True,
     dtype=None,
-    angular_frequency=30.0,
     *,
     key: PRNGKeyArray,
 ) -> ModifiedMLP:
@@ -430,15 +512,15 @@ def make_modified_siren(
     Functions." arXiv, Jun. 17, 2020. Accessed: Mar. 08, 2024. [Online].
     Available: http://arxiv.org/abs/2006.09661
     """
-    mlp_key, *keys = jrandom.split(key, depth + 4)
-    key_iter = iter(keys)
+    mlp_key, fst_w_key, snd_w_key, fst_b_key, snd_b_key = jrandom.split(key, 5)
 
     mod_mlp = ModifiedMLP(
         in_size=in_size,
         out_size=out_size,
         width_size=width_size,
         depth=depth,
-        activation=lambda x: activation(x, angular_frequency),
+        activation=lambda x: activation(x, omega0),
+        first_activation=lambda x: first_activation(x, first_omega0),
         final_activation=final_activation,
         use_bias=use_bias,
         use_final_bias=use_final_bias,
@@ -446,40 +528,43 @@ def make_modified_siren(
         key=mlp_key,
     )
 
-    first_layer, u, v = (
-        reparametrize_linear(
-            layer,
-            weight_dist=lambda k, s: siren_weight_dist(
-                s, omega_0=angular_frequency, is_first=True, dtype=dtype, key=k
-            ),
-            bias_dist=lambda k, s: siren_bias_dist(
-                s, is_first=True, dtype=dtype, key=k
-            ),
-            key=next(key_iter),
-        )
-        for layer in (mod_mlp.layers[0], mod_mlp.u, mod_mlp.v)
+    weight_filter = make_nd_array_filter(2)
+    bias_filter = make_nd_array_filter(1)
+    is_uv_or_first = make_is_leaf_of_filter((mod_mlp.layers[0], mod_mlp.u, mod_mlp.v))
+    is_other = make_is_leaf_of_filter(mod_mlp.layers[1:])
+
+    # re-parameterize weights
+    mod_mlp = reparam_model(
+        mod_mlp,
+        lambda x: weight_filter(x) and is_uv_or_first(x),
+        partial(siren_weight_dist, is_first=True, omega_0=first_omega0),
+        dtype,
+        key=fst_w_key,
     )
 
-    other_layers = (
-        reparametrize_linear(
-            layer,
-            weight_dist=lambda k, s: siren_weight_dist(
-                s, omega_0=angular_frequency, is_first=False, dtype=dtype, key=k
-            ),
-            bias_dist=lambda k, s: siren_bias_dist(
-                s, is_first=False, dtype=dtype, key=k
-            ),
-            key=next(key_iter),
-        )
-        for layer in mod_mlp.layers[1:]
+    mod_mlp = reparam_model(
+        mod_mlp,
+        lambda x: weight_filter(x) and is_other(x),
+        partial(siren_weight_dist, is_first=False, omega_0=omega0),
+        dtype,
+        key=snd_w_key,
     )
 
-    # model surgery
-    mod_siren = mod_mlp
-    for idx, new_layer in enumerate([first_layer, *other_layers]):
-        mod_siren = eqx.tree_at(lambda m: m.layers[idx], mod_siren, new_layer)
+    # re-parameterize biases
+    mod_mlp = reparam_model(
+        mod_mlp,
+        lambda x: bias_filter(x) and is_uv_or_first(x),
+        partial(siren_bias_dist, is_first=True),
+        dtype,
+        key=fst_b_key,
+    )
 
-    mod_siren = eqx.tree_at(lambda m: m.u, mod_siren, u)
-    mod_siren = eqx.tree_at(lambda m: m.v, mod_siren, v)
+    mod_mlp = reparam_model(
+        mod_mlp,
+        lambda x: bias_filter(x) and is_other(x),
+        partial(siren_bias_dist, is_first=False),
+        dtype,
+        key=snd_b_key,
+    )
 
-    return mod_siren
+    return mod_mlp
