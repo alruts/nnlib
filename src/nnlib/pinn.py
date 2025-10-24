@@ -1,4 +1,4 @@
-from typing import Callable, Literal, Protocol, runtime_checkable
+from typing import Callable, Literal, Optional, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax
@@ -63,6 +63,7 @@ class WavePINN(eqx.Module):
         embedding: PeriodicFeatures | RandomFourierFeatures | None = None,
         wave_speed: float = default_wave_speed(),
         medium_density: float = default_medium_density(),
+        pytree_transformation: Optional[Callable[[PyTree], PyTree]] = None,
         **arch_kwargs,
     ):
         model_cls = arch_lib[arch_name]
@@ -77,11 +78,17 @@ class WavePINN(eqx.Module):
             case _:
                 raise ValueError(f"Unsupported embedding: {embedding}")
 
-        model = model_cls(**arch_kwargs)
+        arch = arch_lib[arch_name]
+        model = (
+            pytree_transformation(arch(**arch_kwargs))
+            if pytree_transformation
+            else arch(**arch_kwargs)
+        )
 
         return cls(
             model=model,
             embedding=embedding,
+            frequency=frequency,
             wave_speed=wave_speed,
             medium_density=medium_density,
         )
@@ -230,10 +237,9 @@ class HelmholtzPINN(eqx.Module):
         frequency: float,
         wave_speed: float = default_wave_speed(),
         medium_density: float = default_medium_density(),
+        pytree_transformation: Optional[Callable[[PyTree], PyTree]] = None,
         **arch_kwargs,
     ):
-        arch = arch_lib[arch_name]
-
         match embedding:
             case PeriodicFeatures():
                 arch_kwargs["in_size"] *= 2
@@ -244,8 +250,15 @@ class HelmholtzPINN(eqx.Module):
             case _:
                 raise ValueError(f"Unsupported embedding: {embedding}")
 
+        arch = arch_lib[arch_name]
+        model = (
+            pytree_transformation(arch(**arch_kwargs))
+            if pytree_transformation
+            else arch(**arch_kwargs)
+        )
+
         return cls(
-            model=arch(**arch_kwargs),
+            model=model,
             embedding=embedding,
             frequency=frequency,
             wave_speed=wave_speed,
