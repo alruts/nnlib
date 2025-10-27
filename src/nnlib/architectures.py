@@ -8,7 +8,7 @@ import jax.random as jrandom
 from jaxtyping import Array, Float, PRNGKeyArray
 
 from nnlib.activations import identity_activation, sin_activation
-from nnlib.misc import default_complex_dtype
+from nnlib.misc import default_floating_dtype
 from nnlib.reparametrize import (
     make_is_leaf_of_filter,
     make_nd_array_filter,
@@ -396,7 +396,7 @@ def make_siren(
     omega0: float = 30.0,
     use_bias: bool = True,
     use_final_bias: bool = True,
-    dtype=default_complex_dtype(),
+    dtype=default_floating_dtype(),
     *,
     key: PRNGKeyArray,
 ) -> eqx.nn.MLP:
@@ -486,7 +486,7 @@ def make_modified_siren(
     omega0: float = 30.0,
     use_bias: bool = True,
     use_final_bias: bool = True,
-    dtype=default_complex_dtype(),
+    dtype=default_floating_dtype(),
     *,
     key: PRNGKeyArray,
 ) -> ModifiedMLP:
