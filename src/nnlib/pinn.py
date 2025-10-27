@@ -1,4 +1,4 @@
-from typing import Callable, Literal, Optional, Protocol, runtime_checkable
+from typing import Callable, Literal, Optional
 
 import equinox as eqx
 import jax
@@ -28,19 +28,6 @@ arch_lib = {
 }
 
 
-# Define a protocol for acoustics PINN-like object
-@runtime_checkable
-class AcousticPINNProtocol(Protocol):
-    model: eqx.Module | Callable
-    wave_speed: float
-    medium_density: float
-
-    def p_net(self, params: PyTree, *args: Float) -> Float | Complex: ...
-    def r_net(self, params: PyTree, *args: Float) -> Float | Complex: ...
-    def v_net(self, params: PyTree, *args: Float, **kwargs) -> Float | Complex: ...
-    def z_net(self, params: PyTree, *args: Float, **kwargs) -> Float | Complex: ...
-
-
 class WavePINN(eqx.Module):
     """
     PINN for the acoustic wave equation with optional input embeddings.
@@ -66,8 +53,6 @@ class WavePINN(eqx.Module):
         pytree_transformation: Optional[Callable[[PyTree], PyTree]] = None,
         **arch_kwargs,
     ):
-        model_cls = arch_lib[arch_name]
-
         match embedding:
             case PeriodicFeatures():
                 arch_kwargs["in_size"] *= 2
@@ -88,7 +73,6 @@ class WavePINN(eqx.Module):
         return cls(
             model=model,
             embedding=embedding,
-            frequency=frequency,
             wave_speed=wave_speed,
             medium_density=medium_density,
         )
@@ -268,6 +252,7 @@ class HelmholtzPINN(eqx.Module):
     def p_net(self, params: PyTree, *args: Float) -> Complex:
         """Forward computation of pressure"""
         x = jnp.stack(args)
+        x = jnp.asarray(x, dtype=jnp.result_type(x, *jax.tree.leaves(params)))
 
         if self.embedding:
             x = self.embedding(x)
@@ -309,6 +294,7 @@ class HelmholtzPINN(eqx.Module):
         laplacian = jnp.sum(
             jnp.array(second_derivs_real) + 1j * jnp.array(second_derivs_imag)
         )
+
         k = (2 * jnp.pi * self.frequency) / self.wave_speed
 
         return laplacian + (k**2) * self.p_net(params, *args)
