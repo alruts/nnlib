@@ -154,7 +154,7 @@ for arch, emb in setup:
 
     # Initialize the adam optimizer with learning rate scheduler
     learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
-    optimizer = optax.adam(learning_rate)
+    optimizer = optax.contrib.split_real_and_imaginary(optax.adam(learning_rate))
     opt_state = optimizer.init(params)  # Running state of the optimizer
 
     #
