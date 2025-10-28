@@ -12,8 +12,8 @@ from nnlib.data_utils.data_structures import PointCloud, Triangle
 from nnlib.misc import default_floating_dtype
 
 
-class BaseSampler:
-    """Base class for coordinate sampling."""
+class BaseGenerator:
+    """Base class for training point generators."""
 
     def __init__(self, batch_size, *, key=jrandom.PRNGKey(0)):
         self.batch_size = batch_size
@@ -30,20 +30,19 @@ class BaseSampler:
         raise NotImplementedError
 
 
-class UniformSampler(BaseSampler):
+class UniformGenerator(BaseGenerator):
     """
-    Uniform sampler for a rectangular domain
+    Sample from a rectangular Uniform distribution
 
-    Example
-        >>> bounds = [(0, 1), (0, 1)]
-        >>> sampler = UniformSampler(bounds, 2)
-        >>> x, y = sampler[0]
-        >>> x.shape == (sampler.num_devices, 2)
-        True
-        >>> y.shape == (sampler.num_devices, 2)
-        True
-        >>> all(isinstance(arr, jnp.ndarray) for arr in [x, y])
-        True
+    >>> bounds = [(0, 1), (0, 1)]
+    >>> Generator = UniformGenerator(bounds, 2)
+    >>> x, y = Generator[0]
+    >>> x.shape == (Generator.num_devices, 2)
+    True
+    >>> y.shape == (Generator.num_devices, 2)
+    True
+    >>> all(isinstance(arr, jnp.ndarray) for arr in [x, y])
+    True
     """
 
     def __init__(
@@ -72,31 +71,34 @@ class UniformSampler(BaseSampler):
         return coord_arrays
 
 
-class MeshSampler(BaseSampler):
+class MeshGenerator(BaseGenerator):
     """
-    Uniform sampler for a mesh.
+    Uniform Generator for a mesh.
 
-    This sampler uniformly samples points on the surface of a given
+    This Generator uniformly samples points on the surface of a given
     `trimesh.Trimesh` object using barycentric coordinates.
 
-    Example
-        >>> # Create a simple triangular mesh (a single triangle)
-        >>> vertices = jnp.array(
-        ...     [
-        ...         [0.0, 0.0, 0.0],
-        ...         [1.0, 0.0, 0.0],
-        ...         [0.0, 1.0, 0.0],
-        ...     ]
-        ... )
-        >>> faces = jnp.array([[0, 1, 2]])
-        >>> mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-        >>>
-        >>> sampler = MeshSampler(mesh, batch_size=2, key=jrandom.PRNGKey(0))
-        >>> infinite_boundary_loader = iter(sampler)
-        >>> (x, y, z), (nx, ny, nz) = next(infinite_boundary_loader)
-        >>>
-        >>> assert all(arr.shape == (sampler.num_devices, 2) for arr in [x, y, z, nx, ny, nz])
-        >>> assert all(isinstance(arr, jnp.ndarray) for arr in [x, y, z, nx, ny, nz])
+    >>> # Create a simple triangular mesh (a single triangle)
+    >>> vertices = jnp.array([
+    ...     [0.0, 0.0, 0.0],
+    ...     [1.0, 0.0, 0.0],
+    ...     [1.0, 1.0, 0.0],
+    ...     [1.0, 1.0, 1.0],
+    ... ])
+    >>> faces = jnp.array([
+    ...     [0, 1, 2],
+    ...     [0, 1, 3],
+    ...     [1, 2, 3],
+    ...     [2, 0, 3],
+    ... ])
+    >>> mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+    >>>
+    >>> Generator = MeshGenerator(mesh, batch_size=2, key=jrandom.PRNGKey(0))
+    >>> infinite_boundary_loader = iter(Generator)
+    >>> (x, y, z), (nx, ny, nz) = next(infinite_boundary_loader)
+    >>>
+    >>> assert all(arr.shape == (Generator.num_devices, 2) for arr in [x, y, z, nx, ny, nz])
+    >>> assert all(isinstance(arr, jnp.ndarray) for arr in [x, y, z, nx, ny, nz])
     """
 
     def __init__(
@@ -155,7 +157,7 @@ class MeshSampler(BaseSampler):
         return coord_arrays, normal_arrays
 
 
-class DataPointSampler(BaseSampler):
+class DataPointGenerator(BaseGenerator):
     """
      Randomly samples batches from a PointCloud and returns separate arrays for each dimension.
 
@@ -169,16 +171,16 @@ class DataPointSampler(BaseSampler):
     ...                       [7.0, 8.0, 9.0]]),
     ...     vals=jnp.array([10.0, 20.0, 30.0])
     ... )
-    >>> sampler = DataPointSampler(batch_size=2, point_cloud=data, key=key)
-    >>> infinite_dataloader = iter(sampler)
+    >>> Generator = DataPointGenerator(batch_size=2, point_cloud=data, key=key)
+    >>> infinite_dataloader = iter(Generator)
     >>> x, y, z, vals = next(infinite_dataloader)
-    >>> x.shape == (sampler.num_devices, 2)
+    >>> x.shape == (Generator.num_devices, 2)
     True
-    >>> y.shape == (sampler.num_devices, 2)
+    >>> y.shape == (Generator.num_devices, 2)
     True
-    >>> z.shape == (sampler.num_devices, 2)
+    >>> z.shape == (Generator.num_devices, 2)
     True
-    >>> vals.shape == (sampler.num_devices, 2)
+    >>> vals.shape == (Generator.num_devices, 2)
     True
     >>> all(isinstance(arr, jnp.ndarray) for arr in [x, y, z, vals])
     True
@@ -187,6 +189,9 @@ class DataPointSampler(BaseSampler):
     def __init__(self, batch_size: int, point_cloud: PointCloud, *, key: PRNGKeyArray):
         super().__init__(batch_size=batch_size, key=key)
         self.point_cloud = point_cloud
+
+    def __len__(self):
+        return len(self.point_cloud.vals)
 
     @partial(pmap, static_broadcasted_argnums=(0,))
     def gen_data(self, *, key):

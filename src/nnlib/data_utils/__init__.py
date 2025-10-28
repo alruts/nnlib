@@ -3,16 +3,16 @@ from .data_structures import (
     PointCloud,
     UnstructuredDiscretisationND,
 )
-from .sampling import DataPointSampler, MeshSampler, UniformSampler
+from .sampling import DataPointGenerator, MeshGenerator, UniformGenerator
 from .subsample import full_data, grid_sample, random_sample
 
 __all__ = [
     "PointCloud",
     "GridDiscretisationND",
     "UnstructuredDiscretisationND",
-    "UniformSampler",
-    "DataPointSampler",
-    "MeshSampler",
+    "UniformGenerator",
+    "DataPointGenerator",
+    "MeshGenerator",
     "full_data",
     "grid_sample",
     "random_sample",

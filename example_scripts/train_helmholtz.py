@@ -8,11 +8,12 @@ from tqdm import tqdm
 
 from nnlib import feature_maps
 from nnlib.activations import (
+    split_periodic_activation,
     split_tanh,
 )
 from nnlib.data_utils import (
-    DataPointSampler,
-    UniformSampler,
+    DataPointGenerator,
+    UniformGenerator,
     subsample,
 )
 from nnlib.data_utils.data_structures import GridDiscretisationND
@@ -55,19 +56,21 @@ data = GridDiscretisationND.discretise_fn(
     [(-0.5, 0.5), (-0.5, 0.5)], n_points=[256, 256], fn=point_source
 )
 
-dataset = DataPointSampler(
-    point_cloud=subsample.full_data(
-        data,
-    ),  # returns `PointCloud` with random samples
-    batch_size=128,
-    key=data_key,
-)
+datasets = [
+    DataPointGenerator(
+        point_cloud=subsample.random_sample(
+            data,
+            num_points=n,
+            key=subsample_key,
+        ),  # returns `PointCloud` with random samples
+        batch_size=n,
+        key=data_key,
+    )
+    for n in [8, 16, 32, 64, 128, 256, 512]
+]
 
-domain_sampler = UniformSampler([(-1, 1), (-1, 1)], batch_size=128, key=dom_key)
+domain_sampler = UniformGenerator([(-1, 1), (-1, 1)], batch_size=128, key=dom_key)
 
-# These are infinitely iterable
-infinite_dataloader = iter(dataset)
-infinite_point_generator = iter(domain_sampler)
 
 # Random Fourier features for input coordinates helps with low-frequency bias
 rff_emb = feature_maps.RandomFourierFeatures(
@@ -75,16 +78,6 @@ rff_emb = feature_maps.RandomFourierFeatures(
 )
 id_emb = eqx.nn.Identity()  # simply does nothing
 
-# Pairs of embeddings and architectures for loop
-setup = (
-    ["mlp", rff_emb],
-    ["modified_mlp", rff_emb],
-    ["pirate_net", rff_emb],
-    ["modified_siren", id_emb],
-    ["siren", id_emb],
-)
-
-#
 # Here we define which loss functions to use during training
 # The losses should be parallelized and vectorized via `pmap` and `vmap`
 #
@@ -108,43 +101,47 @@ def compute_pressure(params, pinn):
     return p(params, X, T)
 
 
-# Helper to make plots for logging
-def plot_pred(pressure):
-    fig = plt.figure(figsize=(6, 5))
-    plt.pcolormesh(
-        *data.coordinate_arrays,
-        pressure,
-        shading="auto",
-        cmap="jet",
-    )
-    plt.colorbar(label="Pressure")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    return fig
-
-
 #
 # Train the each setup in a loop
 #
 
-for arch, emb in setup:
+for dataset in datasets:
+    # These are infinitely iterable
+    infinite_dataloader = iter(dataset)
+    infinite_point_generator = iter(domain_sampler)
+
+    # Helper to make plots for logging
+    def plot_pred(pressure):
+        fig = plt.figure(figsize=(6, 5))
+        plt.pcolormesh(
+            *data.coordinate_arrays,
+            pressure,
+            shading="auto",
+            cmap="jet",
+        )
+        plt.colorbar(label="Pressure")
+        plt.scatter(*dataset.point_cloud.coords.T, color="k")
+        plt.xlabel("x")
+        plt.ylabel("y")
+        return fig
+
     # initialize logger
-    logger = TensorboardLogger(experiment_name=f"test-run_{arch}")
+    logger = TensorboardLogger(experiment_name=f"test-run_{len(dataset)}")
     logger.log_plot("plots/gt_re", plot_pred, data.vals.real, 0)  # to visually compare
     logger.log_plot("plots/gt_im", plot_pred, data.vals.imag, 0)  # to visually compare
     log_every = 1000
 
     # build PINN
     pinn = HelmholtzPINN.create(
-        embedding=emb,
-        arch_name=arch,
+        embedding=None,
+        arch_name="siren",
         frequency=FREQUENCY,
         in_size=2,
         out_size="scalar",
         width_size=32,
         depth=3,
         dtype=default_complex_dtype(),
-        activation=split_tanh,
+        activation=split_periodic_activation,
         key=net_key,
     )
 

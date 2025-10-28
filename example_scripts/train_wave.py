@@ -14,8 +14,8 @@ from tqdm import tqdm
 
 from nnlib import feature_maps
 from nnlib.data_utils import (
-    DataPointSampler,
-    UniformSampler,
+    DataPointGenerator,
+    UniformGenerator,
     subsample,
 )
 from nnlib.data_utils.data_structures import GridDiscretisationND
@@ -44,7 +44,7 @@ data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 # and to load random batches of data points
 #
 
-dataset = DataPointSampler(
+dataset = DataPointGenerator(
     point_cloud=subsample.random_sample(
         data,
         num_points=256,
@@ -54,7 +54,7 @@ dataset = DataPointSampler(
     key=data_key,
 )
 
-domain_sampler = UniformSampler([(-1, 1), (-1, 1)], batch_size=1024, key=dom_key)
+domain_sampler = UniformGenerator([(-1, 1), (-1, 1)], batch_size=1024, key=dom_key)
 
 # These are infinitely iterable
 infinite_dataloader = iter(dataset)

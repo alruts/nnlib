@@ -2,13 +2,13 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import trimesh
 
-from nnlib.data_utils import MeshSampler
+from nnlib.data_utils import MeshGenerator
 
 # load mesh from file
 mesh = trimesh.load_mesh("data/test-mesh.stl")
 
 # Initialize a mesh sampler
-sampler = MeshSampler(mesh, batch_size=1024, key=jrandom.PRNGKey(0))
+sampler = MeshGenerator(mesh, batch_size=1024, key=jrandom.PRNGKey(0))
 infinite_loader = iter(sampler)
 n_iter = 2
 
