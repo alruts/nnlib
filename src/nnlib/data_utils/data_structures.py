@@ -220,6 +220,3 @@ class UnstructuredDiscretisationND(eqx.Module):
 
     def __rmul__(self, other):
         return self.__mul__(other)
-
-
-# mesh datastructure
