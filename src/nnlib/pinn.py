@@ -273,6 +273,15 @@ class HelmholtzPINN(eqx.Module):
             >>> params = eqx.filter(pinn.model, eqx.is_array)
             >>> print(pinn.r_net(params, 1.0, 1.0)) # (6 + 6j) + (1 + 1j)
             (7+7j)
+
+        Validation with an analytical Helmholtz solution (residual should be ~0):
+            >>> u_analytic = lambda x: jnp.exp(1j * x[0])  # 1D Helmholtz solution for k=1
+            >>> wave_speed = 2.0 * jnp.pi
+            >>> pinn = HelmholtzPINN(model=u_analytic, frequency=1, wave_speed=wave_speed)
+            >>> params = eqx.filter(pinn.model, eqx.is_array)
+            >>> r = pinn.r_net(params, 0.5)  # Evaluate at x=0.5
+            >>> print(abs(r) < 1e-12)
+            True
         """
 
         def p_fn_real(*x):
