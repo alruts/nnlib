@@ -130,7 +130,7 @@ def compute_weights(
 
         # `vjp` works for both real and complex cases
         y, vjp_fn = jax.vjp(loss_scalar, params)
-        grads = vjp_fn(jnp.ones_like(y))[0]
+        (grads,) = vjp_fn(jnp.ones_like(y))
 
         # Flatten the gradients and compute norms
         flat_grads = jnp.concatenate([g.ravel() for g in jax.tree.leaves(grads)])
