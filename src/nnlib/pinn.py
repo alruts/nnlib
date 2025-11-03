@@ -318,16 +318,16 @@ class HelmholtzPINN(eqx.Module):
                 coordinates = spatial coordinates (x, y, z, ...)
                 tangents = unit normal vector components (nx, ny, nz, ...)
 
-        Validation with a simple analytic model:
+        Validation with polynomial:
             >>> import jax.numpy as jnp
             >>> import equinox as eqx
-            >>> p_fn = lambda x: x[0] + 1j * x[1]
+            >>> p_fn = lambda x: x[0]**2 + 1j * x[1]**2
             >>> pinn = HelmholtzPINN(model=p_fn, frequency=1.0/(2.0 * jnp.pi), medium_density=1.0)
             >>> params = eqx.filter(pinn.model, eqx.is_array)
-            >>> print(pinn.v_net(params, 0.0, 0.0, 0.0, 1.0))
-            (-1+0j)
-            >>> print(pinn.v_net(params, 0.0, 0.0, 1.0, 0.0))
-            1j
+            >>> print(pinn.v_net(params, 0.0, 1.0, 0.0, 1.0))
+            (-2+0j)
+            >>> print(pinn.v_net(params, 1.0, 0.0, 1.0, 0.0))
+            2j
         """
 
         def p_fn_real(*x):
@@ -340,11 +340,10 @@ class HelmholtzPINN(eqx.Module):
         coords, tangent = args[:ndim], args[ndim:]
 
         # directional derivative
-        _, grad_p_real = jax.jvp(p_fn_real, coords, tangent)
-        _, grad_p_imag = jax.jvp(p_fn_imag, coords, tangent)
-        grad_p = jnp.array(grad_p_real) + 1j * jnp.array(grad_p_imag)
+        _, dpdn_real = jax.jvp(p_fn_real, coords, tangent)
+        _, dpdn_imag = jax.jvp(p_fn_imag, coords, tangent)
+        dpdn = jnp.array(dpdn_real) + 1j * jnp.array(dpdn_imag)
 
-        dpdn = jnp.sum(grad_p * jnp.array(tangent))
         return -1.0 / (1j * 2.0 * jnp.pi * self.frequency * self.medium_density) * dpdn
 
     def z_net(self, params: PyTree, *args: Float) -> Complex:
