@@ -22,10 +22,10 @@ class TensorboardLogger:
     """
 
     def __init__(self, log_dir="runs", experiment_name=None, hash_len=8):
-        timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         experiment_name = experiment_name or "exp"
 
-        raw = f"{experiment_name}-{timestamp}-{uuid.uuid4().hex}"
+        raw = f"{experiment_name}{timestamp}{uuid.uuid4().hex}"
         exp_hash = hashlib.sha1(raw.encode()).hexdigest()[:hash_len]
 
         self.exp_name = f"{experiment_name}_{exp_hash}"
@@ -35,7 +35,6 @@ class TensorboardLogger:
         self.writer = tf.summary.create_file_writer(self.log_dir)
         print(f"  TensorBoard logging initialized at: {self.log_dir}")
 
-    # Scalars
     def log_scalar(self, tag, value, step):
         with self.writer.as_default():
             tf.summary.scalar(tag, value, step=step)
@@ -47,7 +46,6 @@ class TensorboardLogger:
                 tf.summary.scalar(f"{main_tag}/{tag}", val, step=step)
             self.writer.flush()
 
-    # ------------------ Histograms ------------------
     def log_histogram(self, tag, values, step, buckets=100):
         if not isinstance(values, np.ndarray):
             values = np.array(values)
@@ -55,7 +53,6 @@ class TensorboardLogger:
             tf.summary.histogram(tag, values, step=step, buckets=buckets)
             self.writer.flush()
 
-    # ------------------ Plots ------------------
     def log_plot(self, tag, plot_fn, data, step):
         fig = plot_fn(data)
         buf = io.BytesIO()
@@ -68,19 +65,17 @@ class TensorboardLogger:
             tf.summary.image(tag, image, step=step)
             self.writer.flush()
 
-    # ------------------ Text ------------------
     def log_text(self, tag, text, step):
         with self.writer.as_default():
             tf.summary.text(tag, text, step=step)
             self.writer.flush()
 
-    # ------------------ HParams ------------------
     def log_hparams(self, hparams: dict, trial_id=None, start_time_secs=None):
         """
         Logs hyperparameters and optionally metrics for filtering in TensorBoard.
 
         Args:
-            hparams (dict): Hyperparameters (name -> value).
+            hparams (dict): Hyperparameters (name > value).
             trial_id (str): Optional unique ID for the trial.
             start_time_secs (float): Optional start time in seconds.
         """
@@ -92,7 +87,6 @@ class TensorboardLogger:
             )
             self.writer.flush()
 
-    # ------------------ Utilities ------------------
     def flush(self):
         self.writer.flush()
 
@@ -100,9 +94,10 @@ class TensorboardLogger:
         self.writer.close()
 
 
-# -------------------------
+#
 # Example usage
-# -------------------------
+#
+
 if __name__ == "__main__":
     import jax.numpy as jnp
 
@@ -114,7 +109,7 @@ if __name__ == "__main__":
 
     # Example plot function
     def plot_sine_wave(data):
-        """User-defined plotter that returns a matplotlib figure."""
+        """Userdefined plotter that returns a matplotlib figure."""
         x, y = data
         fig, ax = plt.subplots()
         ax.plot(x, y, color="tab:blue")
