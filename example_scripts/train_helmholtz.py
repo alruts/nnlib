@@ -4,12 +4,11 @@ import optax
 from jax import numpy as jnp
 from jax import random as jrandom
 from matplotlib import pyplot as plt
+from soap_jax import soap
 from tqdm import tqdm
 
-from nnlib import feature_maps
 from nnlib.activations import (
-    split_periodic_activation,
-    split_tanh,
+    SplitSinActivation,
 )
 from nnlib.data_utils import (
     DataPointGenerator,
@@ -31,8 +30,8 @@ from nnlib.misc import (
     default_complex_dtype,
     default_wave_speed,
     grid_map,
-    split_loss,
-    split_metric,
+    split_real_and_imaginary_loss,
+    split_real_and_imaginary_metric,
 )
 from nnlib.pinn import HelmholtzPINN
 
@@ -43,6 +42,7 @@ data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 # Construct infinite data generators for PDE collocation points
 # and to load random batches of data points
 #
+
 FREQUENCY = 10
 
 
@@ -70,13 +70,6 @@ datasets = [
 ]
 
 domain_sampler = UniformGenerator([(-1, 1), (-1, 1)], batch_size=128, key=dom_key)
-
-
-# Random Fourier features for input coordinates helps with low-frequency bias
-rff_emb = feature_maps.RandomFourierFeatures(
-    embed_scale=20.0, embed_dim=256, in_dim=2, key=emb_key
-)
-id_emb = eqx.nn.Identity()  # simply does nothing
 
 # Here we define which loss functions to use during training
 # The losses should be parallelized and vectorized via `pmap` and `vmap`
@@ -141,17 +134,21 @@ for dataset in datasets:
         width_size=32,
         depth=3,
         dtype=default_complex_dtype(),
-        activation=split_periodic_activation,
+        activation=SplitSinActivation(30.0),
+        first_activation=SplitSinActivation(30.0),
         key=net_key,
     )
 
     # Extract the trainable parameters of the neural-net as a `PyTree`
     params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
-    params = jax.tree.map(lambda x: x / jnp.sqrt(2), params)  # scaling due to complex
+    # params = jax.tree.map(lambda x: x / jnp.sqrt(2), params)  # scaling due to complex
 
     # Initialize the adam optimizer with learning rate scheduler
     learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
     optimizer = optax.contrib.split_real_and_imaginary(optax.adam(learning_rate))
+    # optimizer = optax.contrib.split_real_and_imaginary(
+    #     soap(learning_rate, precondition_frequency=2)
+    # )
     opt_state = optimizer.init(params)  # Running state of the optimizer
 
     #
@@ -169,7 +166,7 @@ for dataset in datasets:
             batch=batch,
             weights=weights,
             losses=losses,
-            criterion=split_loss(aggregated_metrics["mse"]),
+            criterion=split_real_and_imaginary_loss(aggregated_metrics["mse"]),
         )
         grads_conj = jax.tree.map(jnp.conj, grads)
         updates, opt_state = optimizer.update(grads_conj, opt_state, params)
@@ -180,7 +177,7 @@ for dataset in datasets:
     # Training loop: all the optimization work is done here + logging
     #
 
-    total_steps = int(40e3)
+    total_steps = int(4e3) + 1
     for step, data_batch, pde_batch in tqdm(
         zip(range(total_steps), infinite_dataloader, infinite_point_generator),
         total=total_steps,
@@ -212,13 +209,15 @@ for dataset in datasets:
             pred = compute_pressure(params, pinn)
 
             # aggregated metrics
-            pred_error = split_metric(aggregated_metrics["mse"])(pred, data.vals)
+            pred_error = split_real_and_imaginary_metric(aggregated_metrics["mse"])(
+                pred, data.vals
+            )
             logger.log_scalar("error/mse_re", pred_error.real, step)
             logger.log_scalar("error/mse_im", pred_error.imag, step)
 
             # compute point-wise metrics
             for metric, fn in point_wise_metrics.items():
-                error = split_metric(fn)(pred, data.vals)
+                error = split_real_and_imaginary_metric(fn)(pred, data.vals)
                 logger.log_plot(f"errors/{metric}_re", plot_pred, error.real, step)
                 logger.log_plot(f"errors/{metric}_im", plot_pred, error.imag, step)
 

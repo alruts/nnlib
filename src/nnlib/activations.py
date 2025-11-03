@@ -1,9 +1,10 @@
 from functools import partial
 from typing import Callable
 
+import equinox as eqx
 import jax
 from jax import numpy as jnp
-from jaxtyping import Array, Complex
+from jaxtyping import Array, Complex, Float
 
 from nnlib.misc import split_real_and_imaginary_activation
 
@@ -25,19 +26,24 @@ def rotating_cardioid(z: Complex, b: Complex) -> Complex:
     return 0.5 * (1.0 + cos_arg) * z
 
 
-def sin_activation(x: Array, angular_frequency: float) -> Array:
-    return jnp.sin(angular_frequency * x)
+class SinActivation(eqx.Module):
+    """Applies a sine activation scaled by the given angular frequency."""
+
+    angular_frequency: float
+
+    def __call__(self, x: Float) -> Float:
+        return jnp.sin(self.angular_frequency * x)
 
 
-def make_sin_at(angular_frequency: float) -> Callable:
-    """Return sin function at `angular_frequency`"""
-    return partial(sin_activation, angular_frequency=angular_frequency)
+class SplitSinActivation(eqx.Module):
+    """Applies a sine-based activation to complex inputs using the given angular frequency."""
 
+    angular_frequency: float
 
-def split_periodic_activation(z: Complex, angular_frequency: float) -> Complex:
-    return jnp.cos(angular_frequency * z.real) + 1j * jnp.sin(
-        angular_frequency * z.imag
-    )
+    def __call__(self, z: Complex) -> Complex:
+        return jnp.cos(self.angular_frequency * z.real) + 1j * jnp.sin(
+            self.angular_frequency * z.imag
+        )
 
 
 def identity_activation(x: Array) -> Array:

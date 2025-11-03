@@ -1,4 +1,3 @@
-from functools import partial
 from typing import Callable, Literal
 
 import equinox as eqx
@@ -7,7 +6,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from jaxtyping import Array, Float, PRNGKeyArray
 
-from nnlib.activations import identity_activation, sin_activation
+from nnlib.activations import SinActivation, identity_activation
 from nnlib.misc import default_floating_dtype
 from nnlib.reparametrize import (
     make_is_leaf_of_filter,
@@ -57,16 +56,16 @@ class MLPWithFirstActivation(eqx.nn.MLP):
         self.first_activation = first_activation
 
     def __call__(self, x: Array, *, key: PRNGKeyArray | None = None) -> Array:
-        # Apply first layer + first_activation
+        # First layer
         x = self.layers[0](x)
         x = eqx.filter_vmap(lambda a, b: a(b))(self.first_activation, x)
 
-        # Apply remaining layers + regular activation
+        # Middle layers
         for layer in self.layers[1:-1]:
             x = layer(x)
             x = eqx.filter_vmap(lambda a, b: a(b))(self.activation, x)
 
-        # Apply final layer
+        # Final layer
         x = self.layers[-1](x)
         if self.out_size == "scalar":
             x = self.final_activation(x)
@@ -77,7 +76,7 @@ class MLPWithFirstActivation(eqx.nn.MLP):
 
 class ModifiedMLP(MLPWithFirstActivation):
     """
-    A podified multi-layer perceptron (MLP) from [1] that applies learned linear
+    A modified multi-layer perceptron (MLP) from [1] that applies learned linear
     modulators `u` and `v` to the hidden layers before the final output.
 
     Example:
@@ -390,10 +389,9 @@ def make_siren(
     out_size: int | Literal["scalar"],
     width_size: int,
     depth: int,
-    activation: Callable = sin_activation,
+    first_activation=SinActivation(30.0),
+    activation=SinActivation(30.0),
     final_activation: Callable = identity_activation,
-    first_omega0: float = 30.0,
-    omega0: float = 30.0,
     use_bias: bool = True,
     use_final_bias: bool = True,
     dtype=default_floating_dtype(),
@@ -426,8 +424,8 @@ def make_siren(
         out_size=out_size,
         width_size=width_size,
         depth=depth,
-        activation=partial(activation, angular_frequency=omega0),
-        first_activation=partial(activation, angular_frequency=first_omega0),
+        first_activation=first_activation,
+        activation=activation,
         final_activation=final_activation,
         use_bias=use_bias,
         use_final_bias=use_final_bias,
@@ -441,17 +439,20 @@ def make_siren(
     is_first = make_is_leaf_of_filter(mlp.layers[0])
     is_other = make_is_leaf_of_filter(mlp.layers[1:])
 
+    first_omega_0 = first_activation.angular_frequency
+    omega_0 = activation.angular_frequency
+
     # re-parameterize weights
     mlp = reparam_pytree(
         lambda x: weight_filter(x) and is_first(x),
-        siren_weight_initializer(is_first=True, omega_0=first_omega0),
+        siren_weight_initializer(is_first=True, omega_0=first_omega_0),
         dtype,
         key=fst_w_key,
     )(mlp)
 
     mlp = reparam_pytree(
         lambda x: weight_filter(x) and is_other(x),
-        siren_weight_initializer(is_first=False, omega_0=first_omega0),
+        siren_weight_initializer(is_first=False, omega_0=omega_0),
         dtype,
         key=snd_w_key,
     )(mlp)
@@ -479,11 +480,9 @@ def make_modified_siren(
     out_size: int | Literal["scalar"],
     width_size: int,
     depth: int,
-    activation: Callable = sin_activation,
-    first_activation: Callable = sin_activation,
+    first_activation=SinActivation(30.0),
+    activation=SinActivation(30.0),
     final_activation: Callable = identity_activation,
-    first_omega0: float = 30.0,
-    omega0: float = 30.0,
     use_bias: bool = True,
     use_final_bias: bool = True,
     dtype=default_floating_dtype(),
@@ -516,8 +515,8 @@ def make_modified_siren(
         out_size=out_size,
         width_size=width_size,
         depth=depth,
-        activation=lambda x: activation(x, omega0),
-        first_activation=lambda x: first_activation(x, first_omega0),
+        first_activation=first_activation,
+        activation=activation,
         final_activation=final_activation,
         use_bias=use_bias,
         use_final_bias=use_final_bias,
@@ -530,17 +529,20 @@ def make_modified_siren(
     is_uv_or_first = make_is_leaf_of_filter((mod_mlp.layers[0], mod_mlp.u, mod_mlp.v))
     is_other = make_is_leaf_of_filter(mod_mlp.layers[1:])
 
+    first_omega_0 = first_activation.angular_frequency
+    omega_0 = activation.angular_frequency
+
     # re-parameterize weights
     mod_mlp = reparam_pytree(
         lambda x: weight_filter(x) and is_uv_or_first(x),
-        siren_weight_initializer(is_first=True, omega_0=first_omega0),
+        siren_weight_initializer(is_first=True, omega_0=first_omega_0),
         dtype,
         key=fst_w_key,
     )(mod_mlp)
 
     mod_mlp = reparam_pytree(
         lambda x: weight_filter(x) and is_other(x),
-        siren_weight_initializer(is_first=False, omega_0=omega0),
+        siren_weight_initializer(is_first=False, omega_0=omega_0),
         dtype,
         key=snd_w_key,
     )(mod_mlp)
