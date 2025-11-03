@@ -47,105 +47,59 @@ def hom_pde_loss(
     return criterion(pred, 0.0)  # error measure
 
 
-def nonhom_pde_loss(
+def pressure_source_loss(
     params: PyTree,
-    model: WavePINN,
+    model: HelmholtzPINN,
+    source_params: PyTree,
+    source_model: Callable,
     coords: tuple[Array],
     criterion: Callable = aggregated_metrics["mse"],
     *args,
 ) -> float:
-    source_params, source_model = args
-
     n_dim = len(coords)
 
     # vectorize and parallelize
-    batched_r_net = jax.vmap(model.r_net, in_axes=(None, *[0] * n_dim))
-    parallel_r_net = jax.pmap(batched_r_net, in_axes=(None, *[0] * n_dim))
+    batched_fwd_model = jax.vmap(model.p_net, in_axes=(None, *[0] * n_dim))
+    parallel_fwd_model = jax.pmap(batched_fwd_model, in_axes=(None, *[0] * n_dim))
 
-    batched_source_model = jax.vmap(source_model, in_axes=(None, *[0] * n_dim))
-    parallel_source_model = jax.pmap(batched_source_model, in_axes=(None, *[0] * n_dim))
+    # vectorize and parallelize
+    batched_unknown_model = jax.vmap(source_model, in_axes=(None, *[0] * n_dim))
+    parallel_unknown_model = jax.pmap(
+        batched_unknown_model, in_axes=(None, *[0] * n_dim)
+    )
 
-    # make prediction
-    pred = parallel_r_net(params, *coords)
-    source_pred = parallel_source_model(source_params, *coords)
+    # make predictions
+    fwd_pred = parallel_unknown_model(params, *coords)
+    unknown_pred = parallel_unknown_model(source_params, *coords)
 
-    return criterion(pred, source_pred)  # error measure
+    return criterion(fwd_pred, unknown_pred)
 
 
-def impedance_model_loss(
+def flow_source_loss(
     params: PyTree,
     model: HelmholtzPINN,
+    source_params: PyTree,
+    source_model: Callable,
     coords_normals: tuple[Array],
     criterion: Callable = aggregated_metrics["mse"],
-    *args,
 ) -> float:
-    # unpack extra arguments
-    impedance_params, impedance_model = args
     n_dim = len(coords_normals)
 
     # vectorize and parallelize
-    batched_z_net = jax.vmap(model.z_net, in_axes=(None, *[0] * n_dim))
-    parallel_z_net = jax.pmap(batched_z_net, in_axes=(None, *[0] * n_dim))
-
-    batched_z_model = jax.vmap(impedance_model, in_axes=(None, *[0] * n_dim))
-    parallel_z_model = jax.pmap(batched_z_model, in_axes=(None, *[0] * n_dim))
-
-    # make predictions
-    field_pred = parallel_z_net(params, *coords_normals)
-    model_pred = parallel_z_model(impedance_params, *coords_normals)
-
-    return criterion(field_pred, model_pred)  # error measure
-
-
-def velocity_model_loss(
-    params: PyTree,
-    model: HelmholtzPINN,
-    coords_normals: tuple[Array],
-    criterion: Callable = aggregated_metrics["mse"],
-    *args,
-) -> float:
-    # unpack extra arguments
-    velocity_params, velocity_model = args
-    n_dim = len(coords_normals)
+    batched_fwd_model = jax.vmap(model.v_net, in_axes=(None, *[0] * n_dim))
+    parallel_fwd_model = jax.pmap(batched_fwd_model, in_axes=(None, *[0] * n_dim))
 
     # vectorize and parallelize
-    batched_v_net = jax.vmap(model.v_net, in_axes=(None, *[0] * n_dim))
-    parallel_v_net = jax.pmap(batched_v_net, in_axes=(None, *[0] * n_dim))
-
-    batched_v_model = jax.vmap(velocity_model, in_axes=(None, *[0] * n_dim))
-    parallel_v_model = jax.pmap(batched_v_model, in_axes=(None, *[0] * n_dim))
-
-    # make predictions
-    field_pred = parallel_v_net(params, *coords_normals)
-    model_pred = parallel_v_model(velocity_params, *coords_normals)
-
-    return criterion(field_pred, model_pred)  # error measure
-
-
-def pressure_model_loss(
-    params: PyTree,
-    model: HelmholtzPINN,
-    coords_normals: tuple[tuple[Array], tuple[Array]],
-    criterion: Callable = aggregated_metrics["mse"],
-    *args,
-) -> float:
-    # unpack extra arguments
-    pressure_params, pressure_model = args
-    pts, _ = coords_normals
-
-    n_dim = len(pts)
-    # vectorize and parallelize
-    batched_p_net = jax.vmap(model.p_net, in_axes=(None, *[0] * n_dim))
-    parallel_p_net = jax.pmap(batched_p_net, in_axes=(None, *[0] * n_dim))
-
-    batched_p_model = jax.vmap(pressure_model.p_net, in_axes=(None, *[0] * n_dim))
-    parallel_p_model = jax.pmap(batched_p_model, in_axes=(None, *[0] * n_dim))
+    batched_unknown_model = jax.vmap(source_model, in_axes=(None, *[0] * n_dim))
+    parallel_unknown_model = jax.pmap(
+        batched_unknown_model, in_axes=(None, *[0] * n_dim)
+    )
 
     # make predictions
-    field_pred = parallel_p_net(params, *pts)
-    model_pred = parallel_p_model(pressure_params, *pts)
+    fwd_pred = parallel_unknown_model(params, *coords_normals)
+    unknown_pred = parallel_unknown_model(source_params, *coords_normals)
 
-    return criterion(field_pred, model_pred)  # error measure
+    return criterion(fwd_pred, unknown_pred)
 
 
 def compute_loss(
