@@ -57,6 +57,9 @@ class GridDiscretisationND(eqx.Module):
         vals = vals_flat.reshape(*n_points)
         return cls(bounds, vals)
 
+    def transform(self, tx: Callable) -> "GridDiscretisationND":
+        return GridDiscretisationND(self.bounds, tx(self.vals))
+
     @property
     def n_points(self):
         """
