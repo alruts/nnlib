@@ -76,7 +76,7 @@ class RayleighDiskInBaffle(eqx.Module):
         disk_radius: float,
         surface_impedance: float,
         piston_velocity: float,
-        points_per_wavelength: int = 10,
+        points_per_wavelength: int = 6,
     ):
         """Initialize the discretized circular disk and its velocity field."""
 
@@ -161,7 +161,7 @@ if __name__ == "__main__":
         disk_radius=0.1,
         surface_impedance=2.0,
         piston_velocity=1.0,
-        points_per_wavelength=6,
+        points_per_wavelength=7,
     )
 
     # Derived acoustic quantities
