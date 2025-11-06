@@ -1,6 +1,3 @@
-from functools import partial
-from typing import Callable
-
 import equinox as eqx
 import jax
 from jax import numpy as jnp
@@ -36,12 +33,13 @@ class SinActivation(eqx.Module):
 
 
 class SplitSinActivation(eqx.Module):
-    """Applies a sine-based activation to complex inputs using the given angular frequency."""
+    """Applies a sine-based activation to complex inputs using the given
+    angular frequency."""
 
     angular_frequency: float
 
     def __call__(self, z: Complex) -> Complex:
-        return jnp.cos(self.angular_frequency * z.real) + 1j * jnp.sin(
+        return jnp.sin(self.angular_frequency * z.real) + 1j * jnp.sin(
             self.angular_frequency * z.imag
         )
 
