@@ -22,7 +22,7 @@ from nnlib.losses import (
     compute_weighted_loss,
     compute_weights,
     data_loss,
-    pde_loss,
+    hom_pde_loss,
     update_weights,
 )
 from nnlib.metrics import point_wise_metrics
@@ -75,8 +75,8 @@ domain_sampler = UniformGenerator([(-1, 1), (-1, 1)], batch_size=128, key=dom_ke
 # The losses should be parallelized and vectorized via `pmap` and `vmap`
 #
 
-losses = {"data": data_loss, "pde": pde_loss}
-update_weights_every = 100
+losses = {"data": data_loss, "pde": hom_pde_loss}
+update_weights_every = jnp.inf
 
 # Initialize the weights for adaptive grad norm, these are updated after the first step
 # and every `update_weights_every` steps after that
@@ -141,14 +141,14 @@ for dataset in datasets:
 
     # Extract the trainable parameters of the neural-net as a `PyTree`
     params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
-    # params = jax.tree.map(lambda x: x / jnp.sqrt(2), params)  # scaling due to complex
+    params = jax.tree.map(lambda x: x / jnp.sqrt(2), params)  # scaling due to complex
 
-    # Initialize the adam optimizer with learning rate scheduler
+    # Initialize the Adam optimizer with learning rate scheduler
     learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
-    optimizer = optax.contrib.split_real_and_imaginary(optax.adam(learning_rate))
-    # optimizer = optax.contrib.split_real_and_imaginary(
-    #     soap(learning_rate, precondition_frequency=2)
-    # )
+    # optimizer = optax.contrib.split_real_and_imaginary(optax.adam(learning_rate))
+    optimizer = optax.contrib.split_real_and_imaginary(
+        soap(learning_rate, precondition_frequency=2)
+    )
     opt_state = optimizer.init(params)  # Running state of the optimizer
 
     #
@@ -158,7 +158,7 @@ for dataset in datasets:
 
     @eqx.filter_jit
     def train_step(model, params, opt_state, weights, batch):
-        (total, each_term), grads = jax.value_and_grad(  # to visually compare
+        (total, each_term), grads = jax.value_and_grad(
             compute_weighted_loss, has_aux=True
         )(
             params,

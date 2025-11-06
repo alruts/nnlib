@@ -1,10 +1,8 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import matplotlib
 import matplotlib.pyplot as plt
 from jaxtyping import Array, Complex
-from matplotlib import patches
 
 from nnlib import default_medium_density, default_wave_speed
 from nnlib.data_utils import GridDiscretisationND
@@ -181,7 +179,6 @@ if __name__ == "__main__":
     points_per_wavelength_obs = 6
     dx_obs = wavelength / points_per_wavelength_obs
 
-    # Compute n_points directly
     n_points_x = int(2 * grid_extent / dx_obs)
     n_points_y = int(2 * grid_extent / dx_obs)
     n_points_z = int((2 * wavelength) / dx_obs)
@@ -199,6 +196,7 @@ if __name__ == "__main__":
     #
     # # Plot magnitude and phase
     #
+
     for args in (["Magnitude", jnp.abs], ["Phase", jnp.angle]):
         label, tx = args
         fig, ax = plot_discretization(

@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from jaxtyping import Array, Float, PRNGKeyArray
 
-from nnlib.activations import SinActivation, identity_activation
+from nnlib.activations import SinActivation, SplitSinActivation, identity_activation
 from nnlib.misc import default_floating_dtype
 from nnlib.reparametrize import (
     make_is_leaf_of_filter,
@@ -389,8 +389,8 @@ def make_siren(
     out_size: int | Literal["scalar"],
     width_size: int,
     depth: int,
-    first_activation=SinActivation(30.0),
-    activation=SinActivation(30.0),
+    first_activation: SinActivation | SplitSinActivation = SinActivation(30.0),
+    activation: SinActivation | SplitSinActivation = SinActivation(30.0),
     final_activation: Callable = identity_activation,
     use_bias: bool = True,
     use_final_bias: bool = True,
