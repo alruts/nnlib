@@ -1,6 +1,5 @@
+from collections.abc import Sequence
 from functools import partial
-from typing import Sequence
-from warnings import warn
 
 import jax.numpy as jnp
 import trimesh
@@ -116,9 +115,6 @@ class MeshGenerator(BaseGenerator):
         self.normals: Array = jnp.array(
             mesh.face_normals, dtype=default_floating_dtype()
         )
-
-        if not self.mesh.is_watertight:
-            warn("Mesh is not watertight.")
 
     @partial(pmap, static_broadcasted_argnums=(0,))
     def gen_data(self, *, key: PRNGKeyArray):
