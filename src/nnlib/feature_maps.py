@@ -14,8 +14,8 @@ class Identity(eqx.Module):
         >>> import equinox as eqx
         >>> transform = Identity()
         >>> x = jnp.array([0.0])
-        >>> transform(x)
-        Array([0.], dtype=float32)
+        >>> print(transform(x))
+        [0.]
     """
 
     def __call__(self, x):
@@ -31,8 +31,8 @@ class PeriodicFeatures(eqx.Module):
         >>> periods = (1.0, 2.0)
         >>> transform = PeriodicFeatures(periods=periods)
         >>> x = jnp.array([0.0])
-        >>> transform(x)
-        Array([1., 0.], dtype=float32)
+        >>> print(transform(x))
+        [1. 0.]
     """
 
     periods: Tuple[float, ...]

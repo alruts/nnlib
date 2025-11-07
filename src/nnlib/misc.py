@@ -82,9 +82,10 @@ def grid_map(fn: Callable, axis_mask: Sequence[bool | int]):
     >>> X, Y = jnp.meshgrid(x, y, indexing='ij')
     >>> f = lambda x, y, t: x + y + t
     >>> grid_f = grid_map(f, [1, 1, 0])
-    >>> grid_f(X, Y, 1)
-    Array([[11, 21],
-           [12, 22]], dtype=int32)
+    >>> print(grid_f(X, Y, 1))
+    [[11 21]
+     [12 22]]
+
     """
 
     def mapped_fn(*args):

@@ -3,7 +3,7 @@ from typing import Callable, NamedTuple, Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float
+from jaxtyping import Array, Float, Int
 
 # Type hint for points
 CartesianPoint = Float[Array, "n_spatial"]
@@ -58,7 +58,58 @@ class GridDiscretisationND(eqx.Module):
         return cls(bounds, vals)
 
     def transform(self, tx: Callable) -> "GridDiscretisationND":
+        """
+        Apply a transformation function to all values in the grid and return a new GridDiscretisationND.
+
+        The transformation function should accept an array of the same shape as `vals` and return
+        an array of the same shape.
+
+        >>> import jax.numpy as jnp
+        >>> data = GridDiscretisationND.discretise_fn(bounds=[(0,1)], n_points=[3], fn=lambda x: x[0])
+        >>> print(data.vals)
+        [0.  0.5 1. ]
+        >>> squared = data.transform(lambda v: v**2)
+        >>> print(squared.vals)
+        [0.   0.25 1.  ]
+        >>> squared.bounds
+        [(0, 1)]
+        """
         return GridDiscretisationND(self.bounds, tx(self.vals))
+
+    def slice(self, **kwargs) -> "GridDiscretisationND":
+        """
+        Return a lower-dimensional slice of the grid.
+
+        Specify one coordinate to slice along, e.g. x=0.5, y=0, z=0.3.
+
+        >>> data = GridDiscretisationND.discretise_fn(bounds=[(0,1),(0,1)], n_points=[2,2], fn=lambda x: x[0]+x[1])
+        >>> slice_xy = data.slice(x=0.0)  # slices along x=0
+        >>> slice_xy.vals.shape
+        (2,)
+        """
+        if len(kwargs) != 1:
+            raise ValueError("You must specify exactly one coordinate to slice along.")
+
+        coord_name, coord_val = next(iter(kwargs.items()))
+        dim_map = {f"x{i}": i for i in range(self.ndim)}
+        # Allow also 'x', 'y', 'z', 'w', etc. mapping
+        names = "xyzuvw"
+        dim_map.update({name: i for i, name in enumerate(names[: self.ndim])})
+
+        if coord_name not in dim_map:
+            raise ValueError(f"Unknown coordinate '{coord_name}' for slicing.")
+
+        dim = dim_map[coord_name]
+        axis_vals = self.linspaces[dim]
+        closest_idx = int(jnp.argmin(jnp.abs(axis_vals - coord_val)))
+
+        # Slice the vals array along the chosen dimension
+        new_vals = jnp.take(self.vals, closest_idx, axis=dim)
+        # Remove the sliced dimension from bounds
+        new_bounds = [b for i, b in enumerate(self.bounds) if i != dim]
+
+        # If the resulting array is still multi-dimensional, keep it as is
+        return GridDiscretisationND(new_bounds, new_vals)
 
     @property
     def n_points(self):
@@ -104,13 +155,14 @@ class GridDiscretisationND(eqx.Module):
     def coordinate_arrays(self):
         return tuple(jnp.meshgrid(*self.linspaces, indexing="ij"))
 
-    def locate_closest(self, point: Point):
+    def locate_closest(self, point: Point) -> tuple[Int, ...]:
         """
         Locate the index of the closest grid point.
 
         >>> data = GridDiscretisationND.discretise_fn(bounds=[(0,1),(0,1)], n_points=[2,2], fn=lambda x: x[0]+x[1])
-        >>> data.locate_closest(jnp.array([0.1, 0.9]))
-        (Array(0, dtype=int32), Array(1, dtype=int32))
+        >>> x_idx, y_idx = data.locate_closest(jnp.array([0.1, 0.9]))
+        >>> print(f"({x_idx}, {y_idx})")
+        (0, 1)
         """
         flat_coords, pt = jnp.stack(self.coordinate_arrays, -1), point
         flat_idx = jnp.argmin(jnp.sum((flat_coords - pt) ** 2, axis=-1))
@@ -122,89 +174,6 @@ class GridDiscretisationND(eqx.Module):
                 raise ValueError("Mismatched spatial discretisations")
             other = other.vals
         return GridDiscretisationND(self.bounds, fn(self.vals, other))
-
-    def __add__(self, other):
-        return self.binop(other, lambda x, y: x + y)
-
-    def __radd__(self, other):
-        return self.__add__(other)
-
-    def __sub__(self, other):
-        return self.binop(other, lambda x, y: x - y)
-
-    def __rsub__(self, other):
-        return self.binop(other, lambda x, y: y - x)
-
-    def __mul__(self, other):
-        return self.binop(other, lambda x, y: x * y)
-
-    def __rmul__(self, other):
-        return self.__mul__(other)
-
-
-class UnstructuredDiscretisationND(eqx.Module):
-    coords: Float[Array, "n_points ndim"]  # noqa: F722
-    vals: Float[Array, "n_points"]
-
-    @classmethod
-    def discretise_fn(
-        cls,
-        coords: Array,
-        fn: Callable,
-    ):
-        """
-        Evaluate a function at unstructured points.
-        Example:
-            >>> coords = jnp.array([[0,0],[1,1],[0.5,0.5]])
-            >>> udf = UnstructuredDiscretisationND.discretise_fn(coords, lambda x: x[0]+x[1])
-            >>> udf.vals
-            Array([0., 2., 1.], dtype=float32)
-        """
-        if coords.ndim != 2:
-            raise ValueError("coords must be shape (N, ndim)")
-        vals = jax.vmap(fn)(coords)
-        return cls(coords, vals)
-
-    @property
-    def ndim(self):
-        """
-        >>> coords = jnp.array([[0,0],[1,1]])
-        >>> udf = UnstructuredDiscretisationND.discretise_fn(coords, lambda x: x[0]+x[1])
-        >>> udf.ndim
-        2
-        """
-        return self.coords.shape[1]
-
-    @property
-    def n_points(self):
-        """
-        >>> coords = jnp.array([[0,0],[1,1]])
-        >>> udf = UnstructuredDiscretisationND.discretise_fn(coords, lambda x: x[0]+x[1])
-        >>> udf.n_points
-        2
-        """
-        return self.coords.shape[0]
-
-    def locate_closest(self, point: Point):
-        """
-        Return index of closest point in the cloud.
-
-        >>> coords = jnp.array([[0,0],[1,1],[0.5,0.5]])
-        >>> udf = UnstructuredDiscretisationND.discretise_fn(coords, lambda x: x[0]+x[1])
-        >>> print(udf.locate_closest(jnp.array([0.6,0.6])))
-        2
-        """
-        dists = jnp.sum((self.coords - point) ** 2, axis=1)
-        return jnp.argmin(dists)
-
-    def binop(self, other, fn):
-        if isinstance(other, UnstructuredDiscretisationND):
-            if not jnp.allclose(self.coords, other.coords):
-                raise ValueError(
-                    "Mismatched point sets for unstructured discretisations"
-                )
-            other = other.vals
-        return UnstructuredDiscretisationND(self.coords, fn(self.vals, other))
 
     def __add__(self, other):
         return self.binop(other, lambda x, y: x + y)
