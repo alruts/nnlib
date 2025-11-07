@@ -15,6 +15,7 @@ dependencies = [
     "jax>=0.7.2",
     "jaxlib>=0.7.2",
     "matplotlib>=3.10.6",
+    "meshio>=5.3.5",
     "optax>=0.2.6",
     "pyglet<2",
     "pytest>=8.4.2",

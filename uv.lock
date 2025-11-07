@@ -932,6 +932,19 @@ wheels = [
 ]
 
 [[package]]
+name = "meshio"
+version = "5.3.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "rich" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/20/1e/caa4f15c020de3e3486b4133ca689236bd3863a3d6dd0f58e97ce86a296a/meshio-5.3.5.tar.gz", hash = "sha256:f21f01abd9f29ba06ea119304b3d39e610421cfe93b9dd23362834919f87586d", size = 490922, upload-time = "2024-01-31T15:09:41.731Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/89/5f/39cbadc320cd78f4834b0a9f7a2fa3c980dca942bf193f315837eacb8870/meshio-5.3.5-py3-none-any.whl", hash = "sha256:0736c6e34ecc768f62f2cde5d8233a3529512a9399b25c68ea2ca0d5900cdc10", size = 166162, upload-time = "2024-01-31T15:09:36.691Z" },
+]
+
+[[package]]
 name = "ml-dtypes"
 version = "0.5.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1024,6 +1037,7 @@ dependencies = [
     { name = "jax" },
     { name = "jaxlib" },
     { name = "matplotlib" },
+    { name = "meshio" },
     { name = "optax" },
     { name = "pyglet" },
     { name = "pytest" },
@@ -1043,6 +1057,7 @@ requires-dist = [
     { name = "jax", specifier = ">=0.7.2" },
     { name = "jaxlib", specifier = ">=0.7.2" },
     { name = "matplotlib", specifier = ">=3.10.6" },
+    { name = "meshio", specifier = ">=5.3.5" },
     { name = "optax", specifier = ">=0.2.6" },
     { name = "pyglet", specifier = "<2" },
     { name = "pytest", specifier = ">=8.4.2" },
