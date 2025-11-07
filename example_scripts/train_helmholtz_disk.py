@@ -7,6 +7,7 @@ from matplotlib import pyplot as plt
 from soap_jax import soap
 from tqdm import tqdm
 
+from nnlib import feature_maps
 from nnlib.activations import (
     SplitSinActivation,
 )
@@ -50,7 +51,7 @@ data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 disk_integrator = RayleighDiskInBaffle(
     medium_density=default_medium_density(),
     wave_speed=default_wave_speed(),
-    frequency=250.0,
+    frequency=1000.0,
     disk_radius=0.1,
     surface_impedance=20,
     piston_velocity=1.0,
@@ -80,6 +81,8 @@ data = GridDiscretisationND.discretise_fn(
     fn=disk_integrator,
     n_points=[n_points_x, n_points_y, n_points_z],
 )
+
+eval_data = data.slice(z=0)
 
 dataset = DataPointGenerator(
     point_cloud=subsample.random_sample(
@@ -117,10 +120,8 @@ loss_weights = {key: jnp.array(1.0) for key in losses.keys()}
 @eqx.filter_jit
 def compute_pressure(params, pinn):
     """Evaluates pressure over the same grid as original dataset"""
-
-    # Map p_net to accept mesh-grids for x and t
-    p = grid_map(pinn.p_net, axis_mask=(0, 1, 1, 1))
-    return p(params, *data.coordinate_arrays)
+    p = grid_map(pinn.p_net, axis_mask=(0, 1, 1, 0))
+    return p(params, *eval_data.coordinate_arrays, 0.0)
 
 
 #
@@ -134,12 +135,10 @@ infinite_point_generator = iter(domain_sampler)
 
 # Helper to make plots for logging
 def plot_pred(pressure):
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    sc = ax.scatter(*data.coordinate_arrays, c=pressure, alpha=0.1, cmap="seismic")
+    fig, ax = plt.subplots()
+    sc = ax.scatter(*eval_data.coordinate_arrays, c=pressure, cmap="seismic")
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
 
     plt.colorbar(sc, ax=ax)
     ax.set_aspect("equal", "box")
@@ -148,21 +147,30 @@ def plot_pred(pressure):
 
 # initialize logger
 logger = TensorboardLogger(experiment_name=f"test-run_{len(dataset)}")
-logger.log_plot("plots/gt_mag", plot_pred, jnp.abs(data.vals), 0)  # to visually compare
-logger.log_plot("plots/gt_phase", plot_pred, jnp.angle(data.vals), 0)
+logger.log_plot(
+    "plots/gt_mag", plot_pred, jnp.abs(eval_data.vals), 0
+)  # to visually compare
+logger.log_plot("plots/gt_phase", plot_pred, jnp.angle(eval_data.vals), 0)
 log_every = 1000
+
+
+# Random Fourier features for input coordinates helps with low-frequency bias
+rff = feature_maps.RandomFourierFeatures(
+    embed_scale=1 / jnp.sqrt(wavelength), embed_dim=128, in_dim=3, key=emb_key
+)
 
 # build PINN
 pinn = HelmholtzPINN.create(
-    embedding=None,
-    arch_name="pirate_net",
+    embedding=rff,
+    arch_name="siren",
     frequency=disk_integrator.frequency,
     in_size=3,
     out_size="scalar",
     width_size=16,
-    depth=4,
+    depth=3,
     dtype=default_complex_dtype(),
-    activation=split_real_and_imaginary_activation(jax.nn.tanh),
+    first_activation=SplitSinActivation(float(wavenumber)),
+    activation=SplitSinActivation(30.0),
     key=net_key,
 )
 
@@ -234,7 +242,7 @@ for step, data_batch, pde_batch in tqdm(
         pred = compute_pressure(params, pinn)
 
         pred_error = split_real_and_imaginary_metric(aggregated_metrics["mse"])(
-            pred, data.vals
+            pred, eval_data.vals
         )
         logger.log_scalar("errors/mse_re", pred_error.real, step)
         logger.log_scalar("errors/mse_im", pred_error.imag, step)
@@ -243,7 +251,7 @@ for step, data_batch, pde_batch in tqdm(
 
         # compute point-wise metrics
         error = split_real_and_imaginary_metric(point_wise_metrics["sq_error"])(
-            pred, data.vals
+            pred, eval_data.vals
         )
         logger.log_plot("errors/sq_error_re", plot_pred, jnp.real(error), step)
         logger.log_plot("errors/sq_error_im", plot_pred, jnp.imag(error), step)
