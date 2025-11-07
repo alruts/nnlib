@@ -124,8 +124,16 @@ class RayleighDiskInBaffle(eqx.Module):
         local_areas = radial_grid * dr * dtheta
         self.surface_element_areas = local_areas.reshape(-1)
 
-        # Edge tapering of velocity profile
-        self.disk_velocity = piston_velocity
+        # Edge tapering: velocity smoothly goes to zero at the edge
+        radial_flat = radial_grid.reshape(-1)
+        taper_profile = (1 - (radial_flat / disk_radius) ** 2) ** 0.5
+        velocity_flat = piston_velocity * taper_profile
+
+        # Include surface impedance: v_eff = v / (1 + Z_medium / Z_surface)
+        effective_velocity = velocity_flat / (
+            1 + (medium_density * wave_speed) / surface_impedance
+        )
+        self.disk_velocity = effective_velocity
 
     @eqx.filter_jit
     def __call__(self, observation_point: jnp.ndarray) -> Complex:
