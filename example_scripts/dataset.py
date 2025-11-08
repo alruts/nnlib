@@ -7,8 +7,8 @@ from jax.scipy.special import erf
 from matplotlib import pyplot as plt
 from PIL import Image
 
-from nnlib.data_utils import GridDiscretisationND, subsample
-from nnlib.misc import default_wave_speed
+from pinnlib.data_utils import GridDiscretisationND, subsample
+from pinnlib.misc import default_wave_speed
 
 #
 # Load image and turn into `GridDiscretisationND` object. This places it in a

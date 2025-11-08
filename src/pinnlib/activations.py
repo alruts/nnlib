@@ -3,7 +3,7 @@ import jax
 from jax import numpy as jnp
 from jaxtyping import Array, Complex, Float
 
-from nnlib.misc import split_real_and_imaginary_activation
+from pinnlib.misc import split_real_and_imaginary_activation
 
 
 def split_tanh(z: Complex) -> Complex:

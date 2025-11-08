@@ -1,5 +1,5 @@
 [project]
-name = "nnlib"
+name = "pinnlib"
 version = "0.1.0"
 description = "A library of neural network architectures for acoustics-informed applications."
 readme = "README.md"

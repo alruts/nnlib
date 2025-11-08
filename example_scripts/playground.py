@@ -1,5 +1,3 @@
-import os
-
 import equinox as eqx
 import jax
 import optax
@@ -10,35 +8,30 @@ from matplotlib import pyplot as plt
 from soap_jax import soap
 from tqdm import tqdm
 
-from nnlib.architectures import make_siren
-from nnlib.data_utils.generators import MeshGenerator
+from pinnlib.data_utils.generators import MeshGenerator
 
 jax.config.update("jax_enable_x64", True)
 
 
-from nnlib.activations import (
+from pinnlib.activations import (
     SplitSinActivation,
 )
-from nnlib.data_utils import (
+from pinnlib.data_utils import (
     DataPointGenerator,
     UniformGenerator,
     subsample,
 )
-from nnlib.data_utils.data_structures import GridDiscretisationND
-from nnlib.logger import TensorboardLogger
-from nnlib.losses import (
+from pinnlib.data_utils.data_structures import GridDiscretisationND
+from pinnlib.logger import TensorboardLogger
+from pinnlib.losses import (
     aggregated_metrics,
     compute_loss,
-    compute_weighted_loss,
-    compute_weights,
     data_loss,
     hom_pde_loss,
     pressure_model_loss,
-    update_weights,
 )
-from nnlib.metrics import point_wise_metrics
-from nnlib.misc import (
-    apply_model,
+from pinnlib.metrics import point_wise_metrics
+from pinnlib.misc import (
     default_complex_dtype,
     default_medium_density,
     default_wave_speed,
@@ -46,8 +39,8 @@ from nnlib.misc import (
     split_real_and_imaginary_loss,
     split_real_and_imaginary_metric,
 )
-from nnlib.pinn import HelmholtzPINN
-from nnlib.simulate_data.rayleigh_disk import RayleighDiskInBaffle, plot_discretization
+from pinnlib.pinn import HelmholtzPINN
+from pinnlib.simulate_data.rayleigh_disk import RayleighDiskInBaffle
 
 # setup random keys
 seed_key = jrandom.PRNGKey(0)
@@ -62,7 +55,7 @@ field_key, source_key = jrandom.split(seed_key, 2)
 disk_integrator = RayleighDiskInBaffle(
     medium_density=default_medium_density(),
     wave_speed=default_wave_speed(),
-    frequency=4000.0,
+    frequency=400.0,
     disk_radius=0.1,
     surface_impedance=0.3,
     piston_velocity=1.0,
@@ -76,7 +69,7 @@ wavelength = 2 * jnp.pi / wavenumber
 
 # Observation grid
 grid_extent = 1.5 * wavelength
-points_per_wavelength_obs = 6
+points_per_wavelength_obs = 8
 dx_obs = wavelength / points_per_wavelength_obs
 
 n_points_x = int(2 * grid_extent / dx_obs)
@@ -93,14 +86,11 @@ data = GridDiscretisationND.discretise_fn(
     n_points=[n_points_x, n_points_y, n_points_z],
 )
 
-n_training_pts = 1024
 dataset = DataPointGenerator(
-    point_cloud=subsample.random_sample(
+    point_cloud=subsample.full_data(
         data,
-        num_points=n_training_pts,
-        key=data_subsample_key,
     ),  # returns `PointCloud` with random samples
-    batch_size=n_training_pts,
+    batch_size=128,
     key=data_key,
 )
 
@@ -110,7 +100,7 @@ domain_sampler = UniformGenerator(
         (-grid_extent, grid_extent),
         (0.0, wavelength),
     ],
-    batch_size=128,
+    batch_size=256,
     key=dom_key,
 )
 
@@ -122,7 +112,7 @@ disk_sampler = MeshGenerator(mesh, batch_size=128, key=bnd_key)
 # The losses should be parallelized and vectorized via `pmap` and `vmap`
 #
 
-losses = {"data": data_loss, "pde": hom_pde_loss, "aux": pressure_model_loss}
+losses = {"data": data_loss, "pde": hom_pde_loss}
 
 # Initialize the weights for adaptive grad norm, these are updated after the first step
 # and every `update_weights_every` steps after that
@@ -158,7 +148,7 @@ def plot_pred(pressure):
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")
 
-    cbar = plt.colorbar(sc, ax=ax)
+    plt.colorbar(sc, ax=ax)
     ax.set_aspect("equal", "box")
     return fig
 
@@ -206,18 +196,19 @@ params = jax.tree.map(lambda x: x / jnp.sqrt(2), params)  # scaling due to compl
 
 # ...
 aux_params, _ = eqx.partition(aux.model, filter_spec=eqx.is_array)
-aux_params = jax.tree.map(
-    lambda x: x / jnp.sqrt(2), aux_params
-)  # scaling due to complex
+aux_params = jax.tree.map(lambda x: x / jnp.sqrt(2), aux_params)
 
 
 # Initialize the Adam optimizer with learning rate scheduler
 learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
-# optimizer = optax.contrib.split_real_and_imaginary(optax.adam(learning_rate))
-optimizer = optax.contrib.split_real_and_imaginary(
+opt_pinn = optax.contrib.split_real_and_imaginary(
     soap(learning_rate, precondition_frequency=2)
 )
-opt_state = optimizer.init((params, aux_params))  # Running state of the optimizer
+opt_state = opt_pinn.init(params)  # Running state of the optimizer
+
+# ...
+aux_opt = optax.contrib.split_real_and_imaginary(optax.adam(1e-3))
+aux_opt_state = opt_pinn.init(aux_params)  # Running state of the optimizer
 
 #
 # Define a single training step, `filter_jit` compiles this code to
@@ -228,7 +219,6 @@ opt_state = optimizer.init((params, aux_params))  # Running state of the optimiz
 @eqx.filter_jit
 def train_step(model, params, aux_model, aux_params, opt_state, weights, batch):
     # this only needs to include extra args for terms that need it
-    extra_args = {"aux": (aux_params, aux_model)}
 
     (total, each_term), grads = jax.value_and_grad(compute_loss, has_aux=True)(
         params,
@@ -236,29 +226,12 @@ def train_step(model, params, aux_model, aux_params, opt_state, weights, batch):
         batch=batch,
         losses=losses,
         criterion=split_real_and_imaginary_loss(aggregated_metrics["mse"]),
-        extra_args=extra_args,
     )
 
-    ## here find gradient w.r.t. source_model params ... and just simply add them together...
-    aux_val, aux_grads = jax.value_and_grad(losses["aux"], argnums=4)(
-        params,
-        model,
-        batch["aux"],
-        split_real_and_imaginary_loss(aggregated_metrics["mse"]),
-        aux_params,
-        aux_model,
-    )
-
-    aux_grads = optax.tree_utils.tree_zeros_like(aux_grads)
-    total_grads = (grads, aux_grads)  # pair the gradients
-    total_grads_conj = jax.tree.map(jnp.conj, total_grads)
-    updates, opt_state = optimizer.update(
-        total_grads_conj, opt_state, (params, aux_params)
-    )
-    (params, aux_params) = optax.apply_updates(
-        (params, aux_params), updates
-    )  # # pyright: ignore
-    return (params, aux_params), opt_state, (total, each_term, aux_val)
+    total_grads_conj = jax.tree.map(jnp.conj, grads)
+    updates, opt_state = opt_pinn.update(total_grads_conj, opt_state, params)
+    params = optax.apply_updates(params, updates)  # # pyright: ignore
+    return params, opt_state, (total, each_term)
 
 
 #
@@ -279,7 +252,7 @@ for step, data_batch, pde_batch, disk_batch in tqdm(
     batch = {"data": data_batch, "pde": pde_batch, "aux": disk_batch}
 
     # Do step
-    (params, aux_params), opt_state, (loss, individual_losses, aux_loss) = train_step(
+    params, opt_state, (loss, individual_losses) = train_step(
         pinn, params, aux, aux_params, opt_state, loss_weights, batch
     )
 
@@ -308,5 +281,5 @@ for step, data_batch, pde_batch, disk_batch in tqdm(
         error = split_real_and_imaginary_metric(point_wise_metrics["sq_error"])(
             pred, data.vals
         )
-        logger.log_plot(f"errors/sq_error_mag", plot_pred, jnp.abs(error), step)
-        logger.log_plot(f"errors/sq_error_phase", plot_pred, jnp.angle(error), step)
+        logger.log_plot("errors/sq_error_mag", plot_pred, jnp.abs(error), step)
+        logger.log_plot("errors/sq_error_phase", plot_pred, jnp.angle(error), step)

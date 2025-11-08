@@ -2,7 +2,7 @@ import numpy as np
 import trimesh
 
 # Load mesh
-mesh: trimesh.Trimesh = trimesh.load_mesh("./data/test-mesh.stl")
+mesh: trimesh.Trimesh = trimesh.load_mesh("~/Documents/disk.stl")
 
 
 # Function to sample a point uniformly on a triangle

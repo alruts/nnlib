@@ -7,17 +7,17 @@ from matplotlib import pyplot as plt
 from soap_jax import soap
 from tqdm import tqdm
 
-from nnlib.activations import (
+from pinnlib.activations import (
     SplitSinActivation,
 )
-from nnlib.data_utils import (
+from pinnlib.data_utils import (
     DataPointGenerator,
     UniformGenerator,
     subsample,
 )
-from nnlib.data_utils.data_structures import GridDiscretisationND
-from nnlib.logger import TensorboardLogger
-from nnlib.losses import (
+from pinnlib.data_utils.data_structures import GridDiscretisationND
+from pinnlib.logger import TensorboardLogger
+from pinnlib.losses import (
     aggregated_metrics,
     compute_weighted_loss,
     compute_weights,
@@ -25,15 +25,15 @@ from nnlib.losses import (
     hom_pde_loss,
     update_weights,
 )
-from nnlib.metrics import point_wise_metrics
-from nnlib.misc import (
+from pinnlib.metrics import point_wise_metrics
+from pinnlib.misc import (
     default_complex_dtype,
     default_wave_speed,
     grid_map,
     split_real_and_imaginary_loss,
     split_real_and_imaginary_metric,
 )
-from nnlib.pinn import HelmholtzPINN
+from pinnlib.pinn import HelmholtzPINN
 
 seed_key = jrandom.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)

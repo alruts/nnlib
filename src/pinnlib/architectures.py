@@ -6,9 +6,9 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from jaxtyping import Array, Float, PRNGKeyArray
 
-from nnlib.activations import SinActivation, SplitSinActivation, identity_activation
-from nnlib.misc import default_floating_dtype
-from nnlib.reparametrize import (
+from pinnlib.activations import SinActivation, SplitSinActivation, identity_activation
+from pinnlib.misc import default_floating_dtype
+from pinnlib.reparametrize import (
     make_is_leaf_of_filter,
     make_nd_array_filter,
     reparam_pytree,

@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Optional
+from collections.abc import Callable
 
 import jax.numpy as jnp
 from jaxtyping import Array
@@ -33,7 +33,7 @@ def diff(p_ref: Array, p_pred: Array) -> Array:
     return p_pred - p_ref
 
 
-point_wise_metrics: Dict[str, Callable[..., Array]] = {
+point_wise_metrics: dict[str, Callable[..., Array]] = {
     "abs_error": abs_error,
     "sq_error": sq_error,
     "rel_error": relative,
@@ -80,7 +80,7 @@ def mean_rel_error(p_ref: Array, p_pred: Array, eps: float = 1e-8) -> Array:
 def mag_phase(
     x: Array,
     y: Array,
-    axis: Optional[int] = None,
+    axis: int | None = None,
     alpha: float = 1.0,
     beta: float = 1.0,
 ) -> Array:
@@ -90,7 +90,7 @@ def mag_phase(
     ) + beta * jnp.mean(jnp.angle(jnp.exp(1j * (x - y))) ** 2, axis=axis)
 
 
-aggregated_metrics: Dict[str, Callable[..., Array]] = {
+aggregated_metrics: dict[str, Callable[..., Array]] = {
     "mse": mse,
     "rmse": rmse,
     "mae": mae,

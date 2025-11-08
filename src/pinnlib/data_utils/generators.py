@@ -7,8 +7,8 @@ from jax import Array, local_device_count, pmap, vmap
 from jax import random as jrandom
 from jaxtyping import PRNGKeyArray
 
-from nnlib.data_utils.data_structures import PointCloud, Triangle
-from nnlib.misc import default_floating_dtype
+from pinnlib.data_utils.data_structures import PointCloud, Triangle
+from pinnlib.misc import default_floating_dtype
 
 
 class BaseGenerator:

@@ -6,8 +6,8 @@ import jax.numpy as jnp
 from equinox import filter_jit
 from jaxtyping import Array, PyTree
 
-from nnlib.metrics import aggregated_metrics
-from nnlib.pinn import HelmholtzPINN, WavePINN
+from pinnlib.metrics import aggregated_metrics
+from pinnlib.pinn import HelmholtzPINN, WavePINN
 
 
 def data_loss(

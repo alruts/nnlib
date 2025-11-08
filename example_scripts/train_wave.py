@@ -12,15 +12,15 @@ from matplotlib import pyplot as plt
 from soap_jax import soap
 from tqdm import tqdm
 
-from nnlib import feature_maps
-from nnlib.data_utils import (
+from pinnlib import feature_maps
+from pinnlib.data_utils import (
     DataPointGenerator,
     UniformGenerator,
     subsample,
 )
-from nnlib.data_utils.data_structures import GridDiscretisationND
-from nnlib.logger import TensorboardLogger
-from nnlib.losses import (
+from pinnlib.data_utils.data_structures import GridDiscretisationND
+from pinnlib.logger import TensorboardLogger
+from pinnlib.losses import (
     aggregated_metrics,
     compute_weighted_loss,
     compute_weights,
@@ -28,8 +28,8 @@ from nnlib.losses import (
     pde_loss,
     update_weights,
 )
-from nnlib.misc import grid_map
-from nnlib.pinn import WavePINN
+from pinnlib.misc import grid_map
+from pinnlib.pinn import WavePINN
 
 # load data structure from .pkl file
 data_path = Path("./data/gt_data.pkl")

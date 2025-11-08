@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import trimesh
 
-from nnlib.data_utils import MeshGenerator
+from pinnlib.data_utils import MeshGenerator
 
 # load mesh from file
 mesh = trimesh.load_mesh("data/test-mesh.stl")

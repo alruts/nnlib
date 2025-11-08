@@ -4,8 +4,8 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from jaxtyping import Array, Complex
 
-from nnlib import default_medium_density, default_wave_speed
-from nnlib.data_utils import GridDiscretisationND
+from pinnlib import default_medium_density, default_wave_speed
+from pinnlib.data_utils import GridDiscretisationND
 
 jax.config.update("jax_enable_x64", True)
 

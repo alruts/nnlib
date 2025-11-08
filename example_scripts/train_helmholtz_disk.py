@@ -7,18 +7,18 @@ from matplotlib import pyplot as plt
 from soap_jax import soap
 from tqdm import tqdm
 
-from nnlib import feature_maps
-from nnlib.activations import (
+from pinnlib import feature_maps
+from pinnlib.activations import (
     SplitSinActivation,
 )
-from nnlib.data_utils import (
+from pinnlib.data_utils import (
     DataPointGenerator,
     UniformGenerator,
     subsample,
 )
-from nnlib.data_utils.data_structures import GridDiscretisationND
-from nnlib.logger import TensorboardLogger
-from nnlib.losses import (
+from pinnlib.data_utils.data_structures import GridDiscretisationND
+from pinnlib.logger import TensorboardLogger
+from pinnlib.losses import (
     aggregated_metrics,
     compute_weighted_loss,
     compute_weights,
@@ -26,8 +26,8 @@ from nnlib.losses import (
     hom_pde_loss,
     update_weights,
 )
-from nnlib.metrics import point_wise_metrics
-from nnlib.misc import (
+from pinnlib.metrics import sq_error
+from pinnlib.misc import (
     default_complex_dtype,
     default_medium_density,
     default_wave_speed,
@@ -36,8 +36,8 @@ from nnlib.misc import (
     split_real_and_imaginary_loss,
     split_real_and_imaginary_metric,
 )
-from nnlib.pinn import HelmholtzPINN
-from nnlib.simulate_data.rayleigh_disk import RayleighDiskInBaffle
+from pinnlib.pinn import HelmholtzPINN
+from pinnlib.simulate_data.rayleigh_disk import RayleighDiskInBaffle
 
 seed_key = jrandom.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
@@ -250,8 +250,6 @@ for step, data_batch, pde_batch in tqdm(
         logger.log_plot("plots/pred_phase", plot_pred, jnp.angle(pred), step)
 
         # compute point-wise metrics
-        error = split_real_and_imaginary_metric(point_wise_metrics["sq_error"])(
-            pred, eval_data.vals
-        )
+        error = split_real_and_imaginary_metric(sq_error)(pred, eval_data.vals)
         logger.log_plot("errors/sq_error_re", plot_pred, jnp.real(error), step)
         logger.log_plot("errors/sq_error_im", plot_pred, jnp.imag(error), step)

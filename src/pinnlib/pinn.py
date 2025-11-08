@@ -6,14 +6,14 @@ import jax.numpy as jnp
 from diffrax import Dopri5, ODETerm, SaveAt, diffeqsolve
 from jaxtyping import Complex, Float, PyTree
 
-from nnlib.architectures import (
+from pinnlib.architectures import (
     ModifiedMLP,
     PirateNet,
     make_modified_siren,
     make_siren,
 )
-from nnlib.feature_maps import PeriodicFeatures, RandomFourierFeatures
-from nnlib.misc import (
+from pinnlib.feature_maps import PeriodicFeatures, RandomFourierFeatures
+from pinnlib.misc import (
     apply_model,
     default_medium_density,
     default_wave_speed,
@@ -26,6 +26,38 @@ arch_lib = {
     "siren": make_siren,
     "pirate_net": PirateNet,
 }
+
+
+def args_to_array(f):
+    """
+    Wraps a function f(*args) to f_array(x_array) where x_array is a 1D array of all arguments.
+    Returns a function that splits x_array into individual arguments internally.
+    """
+
+    def wrapper(x_array):
+        # Convert 1D array to tuple of scalars for f
+        args = tuple(x_array)
+        return f(*args)
+
+    return wrapper
+
+
+def complex_laplacian(f):
+    def wrapper(*args):
+        # Convert to real vector: [Re(f), Im(f)]
+        @args_to_array
+        def f_realvec(*args):
+            val = f(*args)
+            return jnp.array([val.real, val.imag])
+
+        # Hessian: jacobian of the gradient
+        hess_split = jax.hessian(f_realvec)(jnp.array(args))
+        hessian = hess_split[0] + 1j * hess_split[1]
+        laplacian = jnp.trace(hessian)
+
+        return laplacian
+
+    return wrapper
 
 
 class WavePINN(eqx.Module):
@@ -284,26 +316,10 @@ class HelmholtzPINN(eqx.Module):
             True
         """
 
-        def p_fn_real(*x):
-            return self.p_net(params, *x).real
+        def p_fn(*x):
+            return self.p_net(params, *x)
 
-        def p_fn_imag(*x):
-            return self.p_net(params, *x).imag
-
-        second_derivs_real = [
-            jax.grad(lambda *x: jax.grad(p_fn_real, argnum)(*x), argnum)(*args)
-            for argnum in range(len(args))
-        ]
-
-        second_derivs_imag = [
-            jax.grad(lambda *x: jax.grad(p_fn_imag, argnum)(*x), argnum)(*args)
-            for argnum in range(len(args))
-        ]
-
-        laplacian = jnp.sum(
-            jnp.array(second_derivs_real) + 1j * jnp.array(second_derivs_imag)
-        )
-
+        laplacian = complex_laplacian(p_fn)(*args)
         k = (2 * jnp.pi * self.frequency) / self.wave_speed
 
         return laplacian + (k**2) * self.p_net(params, *args)
