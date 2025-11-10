@@ -144,12 +144,8 @@ class RayleighDiskInBaffle(eqx.Module):
         displacement_vectors = observation_point - self.disk_surface_points
         distances = jnp.linalg.norm(displacement_vectors, axis=-1)
 
-        effective_velocity = self.disk_velocity / (
-            1 + (self.medium_density * self.wave_speed) / self.surface_impedance
-        )
-
         contribution = (
-            effective_velocity * jnp.exp(-1j * wavenumber * distances) / distances
+            self.disk_velocity * jnp.exp(-1j * wavenumber * distances) / distances
         )
 
         pressure = (
@@ -170,11 +166,11 @@ if __name__ == "__main__":
     disk_model = RayleighDiskInBaffle(
         medium_density=default_medium_density(),
         wave_speed=default_wave_speed(),
-        frequency=4000.0,
+        frequency=1000.0,
         disk_radius=0.0875,
         surface_impedance=2.0,
         piston_velocity=1.0,
-        points_per_wavelength=7,
+        points_per_wavelength=12,
     )
 
     # Derived acoustic quantities
@@ -184,7 +180,7 @@ if __name__ == "__main__":
 
     # Observation grid
     grid_extent = 1.5 * wavelength
-    points_per_wavelength_obs = 6
+    points_per_wavelength_obs = 8
     dx_obs = wavelength / points_per_wavelength_obs
 
     n_points_x = int(2 * grid_extent / dx_obs)
@@ -195,16 +191,19 @@ if __name__ == "__main__":
         bounds=[
             (-grid_extent, grid_extent),
             (-grid_extent, grid_extent),
-            (0.01, wavelength),
+            (0.0001, 0.25 * wavelength),
         ],
         fn=disk_model,
         n_points=[n_points_x, n_points_y, n_points_z],
-    )
+    ).slice(z=0)
 
     #
     # # Plot magnitude and phase
     #
 
+    from pinnlib.data_utils.subsample import max_variance_sample
+
+    optimal_points = max_variance_sample(domain, num_points=200)
     for args in (["Magnitude", jnp.abs], ["Phase", jnp.angle]):
         label, tx = args
         fig, ax = plot_discretization(
@@ -219,6 +218,8 @@ if __name__ == "__main__":
             x_circle, y_circle, "k--", linewidth=2, label="Piston Border", alpha=0.4
         )
 
+        ax.scatter(*optimal_points.coords.T, marker="x")
+
         ax.legend()
 
         plt.tight_layout()
@@ -227,32 +228,33 @@ if __name__ == "__main__":
     #
     # # Compute Helmholtz residual in whole domain to ensure clean signal for PINN
     #
-
-    def residual_fn(primal, model):
-        def second_derivative_jvp(p, argnum=0):
-            n = jnp.zeros_like(p)
-            n = n.at[argnum].set(1.0)
-
-            dx_fn = lambda p: jax.jvp(model, (p,), (n,))[1]
-            dxx_fn = lambda p: jax.jvp(dx_fn, (p,), (n,))[1]
-            return dxx_fn(p)
-
-        # make sure the function is close to hh residual
-        dxx = second_derivative_jvp(primal, 0)
-        dyy = second_derivative_jvp(primal, 1)
-        dzz = second_derivative_jvp(primal, 2)
-        p = disk_model(primal)
-        return dxx + dyy + dzz + wavenumber**2 * p
-
-    residual = GridDiscretisationND.discretise_fn(
-        bounds=[
-            (-grid_extent, grid_extent),
-            (-grid_extent, grid_extent),
-            (0.01, wavelength),
-        ],
-        fn=lambda p: residual_fn(p, disk_model),
-        n_points=[n_points_x, n_points_y, n_points_z],
-    )
-
-    print(jnp.mean(jnp.abs(residual.vals)))
-    print(jnp.max(jnp.abs(residual.vals)))
+    #
+    # def residual_fn(primal, model):
+    #     def second_derivative_jvp(p, argnum=0):
+    #         n = jnp.zeros_like(p)
+    #         n = n.at[argnum].set(1.0)
+    #
+    #         dx_fn = lambda p: jax.jvp(model, (p,), (n,))[1]
+    #         dxx_fn = lambda p: jax.jvp(dx_fn, (p,), (n,))[1]
+    #         return dxx_fn(p)
+    #
+    #     # make sure the function is close to hh residual
+    #     dxx = second_derivative_jvp(primal, 0)
+    #     dyy = second_derivative_jvp(primal, 1)
+    #     dzz = second_derivative_jvp(primal, 2)
+    #     p = disk_model(primal)
+    #     return dxx + dyy + dzz + wavenumber**2 * p
+    #
+    # residual = GridDiscretisationND.discretise_fn(
+    #     bounds=[
+    #         (-grid_extent, grid_extent),
+    #         (-grid_extent, grid_extent),
+    #         (0.01, wavelength),
+    #     ],
+    #     fn=lambda p: residual_fn(p, disk_model),
+    #     n_points=[n_points_x, n_points_y, n_points_z],
+    # )
+    #
+    # print(jnp.mean(jnp.abs(residual.vals)))
+    # print(jnp.max(jnp.abs(residual.vals)))
+    #
