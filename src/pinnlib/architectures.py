@@ -147,21 +147,27 @@ class ModifiedMLP(MLPWithFirstActivation):
         )
 
     def __call__(self, x: Array, *, key: PRNGKeyArray | None = None) -> Array:
-        """Forward pass."""
-        # u and v
-        u = self.first_activation(self.u(x))
-        v = self.first_activation(self.v(x))
+        """Forward pass with learned modulators u and v, using filter_vmap for activations."""
 
-        # first layer
-        x = self.first_activation(self.layers[0](x))
+        # Compute modulators u and v with first_activation
+        u = eqx.filter_vmap(lambda a, b: a(b))(self.first_activation, self.u(x))
+        v = eqx.filter_vmap(lambda a, b: a(b))(self.first_activation, self.v(x))
+
+        # First layer
+        x = eqx.filter_vmap(lambda a, b: a(b))(self.first_activation, self.layers[0](x))
         x = x * u + (1 - x) * v
 
-        # middle layers
+        # Middle layers
         for layer in self.layers[1:-1]:
-            x = self.activation(layer(x))
+            x = eqx.filter_vmap(lambda a, b: a(b))(self.activation, layer(x))
             x = x * u + (1 - x) * v
 
-        x = self.final_activation(self.layers[-1](x))  # Last layer
+        # Final layer
+        x = self.layers[-1](x)
+        if self.out_size == "scalar":
+            x = self.final_activation(x)
+        else:
+            x = eqx.filter_vmap(lambda a, b: a(b))(self.final_activation, x)
 
         return x
 
