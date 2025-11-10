@@ -76,10 +76,11 @@ def flow_model_loss(
     forward_model: HelmholtzPINN,
     inverse_params: PyTree,
     inverse_model: Callable,
-    coords: tuple[Array],
+    coords_normals: tuple[Array],
     criterion: Callable = aggregated_metrics["mse"],
     *args,
 ) -> float:
+    coords, normals = coords_normals
     n_dim = len(coords)
 
     # vectorize and parallelize
