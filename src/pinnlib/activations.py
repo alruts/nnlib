@@ -23,16 +23,14 @@ def rotating_cardioid(z: Complex, b: Complex) -> Complex:
     return 0.5 * (1.0 + cos_arg) * z
 
 
-class LearnableSplitTanhLinear(eqx.Module):
+class LearnableSplitTanh(eqx.Module):
     """Applies a sine activation scaled by the given angular frequency."""
 
-    scalar_re: Array
-    scalar_im: Array
+    a: Float
+    b: Float
 
     def __call__(self, z: Float) -> Float:
-        return self.scalar_re * jax.nn.tanh(z.real) + 1j * self.scalar_im * jax.nn.tanh(
-            z.imag
-        )
+        return self.a * jax.nn.tanh(z.real) + 1j * self.b * jax.nn.tanh(z.imag)
 
 
 class SinActivation(eqx.Module):
