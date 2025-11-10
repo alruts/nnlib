@@ -92,8 +92,8 @@ class GridDiscretisationND(eqx.Module):
 
         coord_name, coord_val = next(iter(kwargs.items()))
         dim_map = {f"x{i}": i for i in range(self.ndim)}
-        # Allow also 'x', 'y', 'z', 'w', etc. mapping
-        names = "xyzuvw"
+
+        names = "xyzt"
         dim_map.update({name: i for i, name in enumerate(names[: self.ndim])})
 
         if coord_name not in dim_map:
@@ -105,6 +105,7 @@ class GridDiscretisationND(eqx.Module):
 
         # Slice the vals array along the chosen dimension
         new_vals = jnp.take(self.vals, closest_idx, axis=dim)
+
         # Remove the sliced dimension from bounds
         new_bounds = [b for i, b in enumerate(self.bounds) if i != dim]
 
