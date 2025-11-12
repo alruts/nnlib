@@ -1,4 +1,5 @@
-from typing import Callable, Literal, Optional
+from collections.abc import Callable
+from typing import Literal
 
 import equinox as eqx
 import jax
@@ -15,6 +16,7 @@ from pinnlib.architectures import (
 from pinnlib.feature_maps import PeriodicFeatures, RandomFourierFeatures
 from pinnlib.misc import (
     apply_model,
+    args_to_array,
     default_medium_density,
     default_wave_speed,
 )
@@ -26,75 +28,6 @@ arch_lib = {
     "siren": make_siren,
     "pirate_net": PirateNet,
 }
-
-
-def args_to_array(f):
-    """
-    Wraps a function f(*args) to f_array(x_array) where x_array is a 1D array of all arguments.
-    Returns a function that splits x_array into individual arguments internally.
-
-    Example:
-    >>> import jax.numpy as jnp
-    >>> f = lambda x, y, z: x + y * z
-    >>> f_array = args_to_array(f)
-    >>> x_array = jnp.array([2., 3., 4.])
-    >>> print(f_array(x_array))
-    14.0
-    >>> # It behaves equivalently to f(*x_array)
-    >>> print(f(*x_array))
-    14.0
-    """
-
-    def wrapper(x_array):
-        # Convert 1D array to tuple of scalars for f
-        args = tuple(x_array)
-        return f(*args)
-
-    return wrapper
-
-
-def array_to_args(f):
-    """
-    Wraps a function f_array(x_array) -> scalar to a version f(*args)
-    where the arguments are packed into a single 1D array internally.
-
-    This is the inverse of `args_to_array`.
-
-    Example:
-    >>> import jax.numpy as jnp
-    >>> f = lambda x, y, z: x + y * z
-    >>> f_arr = args_to_array(f)
-    >>> print(f_arr(jnp.array([2.0, 3.0, 4.0])))
-    14.0
-    >>> f_restored = array_to_args(f_arr)
-    >>> print(f(2, 3, 4) == f_restored(2, 3, 4))
-    True
-    """
-
-    def wrapper(*args):
-        # Pack args into a 1D array for f_array
-        x_array = jnp.array(args)
-        return f(x_array)
-
-    return wrapper
-
-
-def complex_laplacian(f):
-    def wrapper(*args):
-        # Convert to real vector: [Re(f), Im(f)]
-        @args_to_array
-        def f_realvec(*args):
-            val = f(*args)
-            return jnp.array([val.real, val.imag])
-
-        # Hessian: jacobian of the gradient
-        hess_split = jax.hessian(f_realvec)(jnp.array(args))
-        hessian = hess_split[0] + 1j * hess_split[1]
-        laplacian = jnp.trace(hessian)
-
-        return laplacian
-
-    return wrapper
 
 
 class WavePINN(eqx.Module):
@@ -119,7 +52,7 @@ class WavePINN(eqx.Module):
         embedding: PeriodicFeatures | RandomFourierFeatures | None = None,
         wave_speed: float = default_wave_speed(),
         medium_density: float = default_medium_density(),
-        pytree_transformation: Optional[Callable[[PyTree], PyTree]] = None,
+        pytree_transformation: Callable[[PyTree], PyTree] | None = None,
         **arch_kwargs,
     ):
         match embedding:
@@ -169,7 +102,6 @@ class WavePINN(eqx.Module):
             >>> params = eqx.filter(pinn.model, eqx.is_array)
             >>> print(pinn.r_net(params, 1.0, -1.0)) # 6(1) - (6/4)(-1) = 7.5
             7.5
-
         """
 
         def p_fn(*x):
@@ -191,8 +123,8 @@ class WavePINN(eqx.Module):
         Arguments:
             params: Model parameters
             *args: (coordinates..., tangents...) where
-                coordinates = spatial coordinates (x, y, z, ...)
-                tangents = unit normal vector components (nx, ny, nz, ...)
+                | coordinates = time-spatial coordinates x, y, ..., t
+                | tangents = unit normal vector components nx, ny, ...
 
             saveat: specify time steps to return see `diffrax.SaveAt`. Defaults to t.
 
@@ -216,10 +148,9 @@ class WavePINN(eqx.Module):
         >>> vs = pinn.v_net(params, x1, t1, 1.0, saveat=SaveAt(ts=ts))
         >>> print(jnp.allclose(vs, analytic(x1, ts)))
         True
-
-
         """
 
+        # spatial dimensions
         ndim = len(args) // 2
 
         # tangent has no time component
@@ -255,8 +186,8 @@ class WavePINN(eqx.Module):
         Arguments:
             params: Model parameters
             *args: (coordinates..., tangents...) where
-                coordinates = spatial coordinates (x, y, z, ...)
-                tangents = unit normal vector components (nx, ny, nz, ...)
+                | coordinates = time-spatial coordinates x, y, ..., t
+                | tangents = unit normal vector components nx, ny, ...
             saveat: specify time steps to return see `diffrax.SaveAt`. Defaults to t.
         """
         ndim = len(args) // 2
@@ -290,7 +221,7 @@ class HelmholtzPINN(eqx.Module):
         frequency: float,
         wave_speed: float = default_wave_speed(),
         medium_density: float = default_medium_density(),
-        pytree_transformation: Optional[Callable[[PyTree], PyTree]] = None,
+        pytree_transformation: Callable[[PyTree], PyTree] | None = None,
         **arch_kwargs,
     ):
         match embedding:
@@ -349,14 +280,18 @@ class HelmholtzPINN(eqx.Module):
             >>> pinn = HelmholtzPINN(model=u_analytic, frequency=1, wave_speed=wave_speed)
             >>> params = eqx.filter(pinn.model, eqx.is_array)
             >>> r = pinn.r_net(params, 0.5)  # Evaluate at x=0.5
-            >>> print(abs(r) < 1e-12)
-            True
+            >>> print(r)
+            0j
         """
 
-        def p_fn(*x):
-            return self.p_net(params, *x)
+        @args_to_array
+        def p_split(*x):
+            return jnp.array([self.p_net(params, *x).real, self.p_net(params, *x).imag])
 
-        laplacian = complex_laplacian(p_fn)(*args)
+        hess_split = jax.hessian(p_split)(jnp.array(args))
+        hessian = hess_split[0] + 1j * hess_split[1]
+        laplacian = jnp.trace(hessian)
+
         k = (2 * jnp.pi * self.frequency) / self.wave_speed
 
         return laplacian + (k**2) * self.p_net(params, *args)
@@ -368,8 +303,8 @@ class HelmholtzPINN(eqx.Module):
         Arguments:
             params: Model parameters
             *args: (coordinates..., tangents...) where
-                coordinates = spatial coordinates (x, y, z, ...)
-                tangents = unit normal vector components (nx, ny, nz, ...)
+                | coordinates = spatial coordinates x, y, z, ...
+                | tangents = unit normal vector components nx, ny, nz, ...
 
         Validation with polynomial:
             >>> import jax.numpy as jnp
@@ -383,19 +318,16 @@ class HelmholtzPINN(eqx.Module):
             2j
         """
 
-        def p_fn_real(*x):
-            return self.p_net(params, *x).real
+        # map return type from C to R^2
+        def p_fn(*x):
+            return self.p_net(params, *x)
 
-        def p_fn_imag(*x):
-            return self.p_net(params, *x).imag
-
+        # number of spatial dimensions
         ndim = len(args) // 2
         coords, tangent = args[:ndim], args[ndim:]
 
-        # directional derivative
-        _, dpdn_real = jax.jvp(p_fn_real, coords, tangent)
-        _, dpdn_imag = jax.jvp(p_fn_imag, coords, tangent)
-        dpdn = jnp.array(dpdn_real) + 1j * jnp.array(dpdn_imag)
+        # directional derivative via Jacobi-vector product
+        _, dpdn = jax.jvp(p_fn, coords, tangent)
 
         return -1.0 / (1j * 2.0 * jnp.pi * self.frequency * self.medium_density) * dpdn
 
@@ -404,10 +336,10 @@ class HelmholtzPINN(eqx.Module):
         Compute directional impedance normalized to the medium.
 
         Arguments:
-            params: Model parameters
-            *args: (coordinates..., tangents...) where
-                coordinates = spatial coordinates (x, y, z, ...)
-                tangents = unit normal vector components (nx, ny, nz, ...)
+          params: Model parameters
+          args: (coordinates..., tangents...) where
+            - coordinates = spatial coordinates x, y, z, ...
+            - tangents = unit normal vector components nx, ny, nz, ...
 
         """
         ndim = len(args) // 2
