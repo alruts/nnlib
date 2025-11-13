@@ -99,7 +99,6 @@ class TensorboardLogger:
 #
 
 if __name__ == "__main__":
-    import jax.numpy as jnp
 
     logger = TensorboardLogger(experiment_name="jax_demo")
 

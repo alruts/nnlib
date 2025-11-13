@@ -1,10 +1,8 @@
-from functools import wraps
-from typing import Any, Callable, Optional, Sequence
+from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from matplotlib import axes
 
 _default_constants = {
     "wave_speed": 343.20,

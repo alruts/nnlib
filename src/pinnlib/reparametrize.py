@@ -1,4 +1,5 @@
-from typing import Any, Callable, Sequence
+from collections.abc import Callable
+from typing import Any
 
 import equinox as eqx
 import jax

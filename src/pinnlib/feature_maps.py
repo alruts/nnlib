@@ -1,4 +1,3 @@
-from typing import Tuple
 
 import equinox as eqx
 import jax
@@ -35,7 +34,7 @@ class PeriodicFeatures(eqx.Module):
         [1. 0.]
     """
 
-    periods: Tuple[float, ...]
+    periods: tuple[float, ...]
 
     def __call__(self, x):
         # Apply cos/sin embedding to each axis

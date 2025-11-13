@@ -3,7 +3,6 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
-from jax.scipy.special import erf
 from matplotlib import pyplot as plt
 from PIL import Image
 

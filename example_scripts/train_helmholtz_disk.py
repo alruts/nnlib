@@ -9,7 +9,6 @@ from tqdm import tqdm
 
 from pinnlib import feature_maps
 from pinnlib.activations import (
-    LearnableSplitTanh,
     SplitSinActivation,
 )
 from pinnlib.data_utils import (

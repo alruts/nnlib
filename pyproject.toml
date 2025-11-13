@@ -19,6 +19,7 @@ dependencies = [
     "optax>=0.2.6",
     "pyglet<2",
     "pytest>=8.4.2",
+    "ruff>=0.14.4",
     "soap-jax",
     "tensorflow>=2.20.0",
     "torch>=2.8.0",

@@ -1,4 +1,5 @@
-from typing import Callable, NamedTuple, Sequence
+from collections.abc import Callable, Sequence
+from typing import NamedTuple
 
 import equinox as eqx
 import jax

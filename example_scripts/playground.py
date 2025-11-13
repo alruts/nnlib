@@ -28,7 +28,6 @@ from pinnlib.losses import (
     compute_loss,
     data_loss,
     hom_pde_loss,
-    pressure_model_loss,
 )
 from pinnlib.metrics import point_wise_metrics
 from pinnlib.misc import (
