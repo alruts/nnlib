@@ -71,31 +71,6 @@ def pressure_model_loss(
     return criterion(fwd_pred, inv_pred)
 
 
-def flow_model_loss(
-    forward_params: PyTree,
-    forward_model: HelmholtzPINN,
-    inverse_params: PyTree,
-    inverse_model: Callable,
-    coords_normals: tuple[Array],
-    criterion: Callable = aggregated_metrics["mse"],
-    *args,
-) -> float:
-    coords, normals = coords_normals
-    n_dim = len(coords)
-
-    # vectorize and parallelize
-    batched_fwd_model = jax.vmap(forward_model.v_net, in_axes=(None, *[0] * n_dim))
-    parallel_fwd_model = jax.pmap(batched_fwd_model, in_axes=(None, *[0] * n_dim))
-
-    batched_inv_model = jax.vmap(inverse_model, in_axes=(None, *[0] * n_dim))
-    parallel_inv_model = jax.pmap(batched_inv_model, in_axes=(None, *[0] * n_dim))
-
-    fwd_pred = parallel_fwd_model(forward_params, *coords)
-    inv_pred = parallel_inv_model(inverse_params, *coords)
-
-    return criterion(fwd_pred, inv_pred)
-
-
 def compute_loss(
     params: PyTree,
     model: WavePINN,
@@ -108,8 +83,8 @@ def compute_loss(
     Compute the total loss and auxiliary per-loss values.
     """
     computed_losses: dict[str, float] = {
-        key: func(params, model, batch[key], criterion, *extra_args.get(key, ()))
-        for key, func in losses.items()
+        term: l_fn(params, model, batch[term], criterion, *extra_args.get(term, ()))
+        for term, l_fn in losses.items()
     }
     total_loss = jax.tree.reduce(lambda x, y: x + y, computed_losses)
     return total_loss, computed_losses
@@ -122,12 +97,12 @@ def compute_weighted_loss(
     batch: dict[str, tuple[Array]],
     losses: dict[str, Callable],
     criterion: Callable,
+    extra_args: dict[str, Any] = {},
 ) -> tuple[float, dict[str, float]]:
-    computed_losses = jax.tree.map(
-        lambda loss_fn, batch_data: loss_fn(params, model, batch_data, criterion),
-        losses,
-        batch,
-    )
+    computed_losses: dict[str, float] = {
+        term: l_fn(params, model, batch[term], criterion, *extra_args.get(term, ()))
+        for term, l_fn in losses.items()
+    }
     weighted_losses = jax.tree.map(lambda x, y: x * y, computed_losses, weights)
     total_loss = jax.tree.reduce(lambda x, y: x + y, weighted_losses)
     return total_loss, computed_losses
@@ -140,26 +115,28 @@ def compute_weights(
     batch: dict[str, tuple],
     losses: dict[str, Callable],
     criterion=aggregated_metrics["mse"],
+    extra_args: dict[str, Any] = {},
 ):
     """Compute grad-norm-based weights for each loss in `losses` dict, supporting complex numbers."""
 
-    grad_norms = {}
-    for term, loss_fn in losses.items():
-        # partially applied loss
-        def loss_scalar(params):
-            return loss_fn(params, model, batch[term], criterion)
+    def grad_norm(loss_fn, term):
+        """Compute L2 norm of gradients for a single loss term."""
 
-        # `vjp` works for both real and complex cases
+        def loss_scalar(p):
+            return loss_fn(p, model, batch[term], criterion, *extra_args.get(term, ()))
+
         y, vjp_fn = jax.vjp(loss_scalar, params)
         (grads,) = vjp_fn(jnp.ones_like(y))
 
-        # Flatten the gradients and compute norms
-        flat_grads = jnp.concatenate([g.ravel() for g in jax.tree.leaves(grads)])
-        grad_norms[term] = jnp.sqrt(
-            jnp.sum(jnp.abs(flat_grads) ** 2)
-        )  # valid for complex numbers
+        # Compute squared L2 norm over all parameters
+        leaves = jax.tree.leaves(grads)
+        norm_sq = jnp.sum(jnp.stack([jnp.sum(jnp.abs(g) ** 2) for g in leaves]))
+        return jnp.sqrt(norm_sq)
 
-    mean_grad_norm = jnp.mean(jnp.array(jax.tree.leaves(grad_norms)))
+    # Vectorize over the loss dict
+    grad_norms = {term: grad_norm(loss_fn, term) for term, loss_fn in losses.items()}
+
+    mean_grad_norm = jnp.mean(jnp.array(list(grad_norms.values())))
 
     # Compute weights
     weights = {term: mean_grad_norm / norm for term, norm in grad_norms.items()}

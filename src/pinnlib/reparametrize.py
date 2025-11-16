@@ -215,7 +215,7 @@ def reparam_pytree(
     return apply
 
 
-def transform_pytree(filter_fn: Callable[[Any], bool], transform_fn: Callable):
+def filter_tree_map(filter_fn: Callable[[Any], bool], transform_fn: Callable):
     """
     Return a function that applies a transformation to selected model parameters.
 
@@ -235,7 +235,7 @@ def transform_pytree(filter_fn: Callable[[Any], bool], transform_fn: Callable):
         >>> model = Simple(jnp.ones((2, 2)), jnp.zeros((2,)))
         >>> filter_fn = lambda x: x.ndim == 2
         >>> transform_fn = lambda x: 0.5 * x
-        >>> transform = transform_pytree(filter_fn, transform_fn)
+        >>> transform = filter_tree_map(filter_fn, transform_fn)
         >>> new_model = transform(model)
         >>> isinstance(new_model, Simple)
         True
