@@ -1,11 +1,17 @@
 import numpy as np
+import pyvista as pv
 import trimesh
 
-# Load mesh
-mesh: trimesh.Trimesh = trimesh.load_mesh("~/Documents/disk.stl")
+# -----------------------------
+# 1. Load mesh using trimesh
+# -----------------------------
+mesh_tm = trimesh.load_mesh("data/disk_01.stl")  # your input mesh
+scale = mesh_tm.scale
 
 
-# Function to sample a point uniformly on a triangle
+# -----------------------------
+# 2. Sample points on mesh
+# -----------------------------
 def sample_point_on_triangle(tri):
     u, v = np.random.rand(2)
     if u + v > 1:
@@ -14,35 +20,73 @@ def sample_point_on_triangle(tri):
     return u * tri[0] + v * tri[1] + w * tri[2]
 
 
-# Parameters
-n_points = 512  # number of points to sample
-point_scale = mesh.scale / 100
-normal_length = mesh.scale * 0.05
-
-# Lists to hold spheres and normal lines
-spheres = []
-lines = []
+n_points = 512
+pts = []
+nrms = []
 
 for _ in range(n_points):
-    # Pick a random face index
-    face_index = np.random.randint(len(mesh.faces))
-    triangle = mesh.triangles[face_index]
-    normal = mesh.face_normals[face_index]
+    idx = np.random.randint(len(mesh_tm.faces))
+    tri = mesh_tm.triangles[idx]
+    nrm = mesh_tm.face_normals[idx]
 
-    # Sample point on the triangle
-    pt = sample_point_on_triangle(triangle)
+    p = sample_point_on_triangle(tri)
+    pts.append(p)
+    nrms.append(nrm)
 
-    # Sphere for sampled point
-    s = trimesh.creation.icosphere(radius=point_scale)
-    s.apply_translation(pt)
-    s.visual.vertex_colors = [255, 0, 0, 255]  # red
-    spheres.append(s)
+pts = np.array(pts)
+nrms = np.array(nrms)
 
-    # Line for normal
-    vec = np.array([pt, pt + normal * normal_length])
-    path = trimesh.load_path(vec.reshape((-1, 2, 3)))
-    lines.append(path)
 
-# Combine mesh, spheres, and lines into a scene
-scene = trimesh.Scene([mesh, *spheres, *lines])
-scene.show(smooth=False)
+# -----------------------------
+# 3. Convert to PyVista
+# -----------------------------
+mesh_pv = pv.wrap(mesh_tm)
+
+
+# -----------------------------
+# 4. Build visualization
+# -----------------------------
+plotter = pv.Plotter(shape=(1, 2), border="white")
+
+# --------------------------------------
+# LEFT PANE — raw mesh only
+# --------------------------------------
+plotter.subplot(0, 0)
+plotter.add_text("Raw mesh", font_size=12)
+plotter.add_mesh(mesh_pv, color="lightgray")
+plotter.add_axes()
+plotter.show_bounds(grid="front")
+
+
+# --------------------------------------
+# RIGHT PANE — mesh + points + normals + scale helpers
+# --------------------------------------
+plotter.subplot(0, 1)
+plotter.add_text("Mesh + points + normals + scale", font_size=12)
+
+# mesh
+plotter.add_mesh(mesh_pv, color="lightgray", opacity=0.6)
+
+# sampled points
+plotter.add_points(pts, color="red", point_size=8)
+
+# normal arrow glyphs
+arrow_length = scale * 0.05
+plotter.add_arrows(pts, nrms * arrow_length, color="blue")
+
+# axes helper
+plotter.add_axes()
+
+# bounding box
+plotter.show_bounds(grid="back", location="outer", ticks="outside")
+
+# optional ground grid
+grid_size = scale
+grid = pv.Plane(i_size=grid_size, j_size=grid_size)
+plotter.add_mesh(grid, color="lightgray", opacity=0.2)
+
+
+# -----------------------------
+# 5. Show full scene
+# -----------------------------
+plotter.show()

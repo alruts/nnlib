@@ -1438,6 +1438,7 @@ dependencies = [
     { name = "optax" },
     { name = "pyglet" },
     { name = "pytest" },
+    { name = "pyvista" },
     { name = "ruff" },
     { name = "soap-jax" },
     { name = "tensorflow" },
@@ -1459,12 +1460,22 @@ requires-dist = [
     { name = "optax", specifier = ">=0.2.6" },
     { name = "pyglet", specifier = "<2" },
     { name = "pytest", specifier = ">=8.4.2" },
+    { name = "pyvista", specifier = ">=0.46.4" },
     { name = "ruff", specifier = ">=0.14.4" },
     { name = "soap-jax", git = "https://github.com/haydn-jones/SOAP_JAX" },
     { name = "tensorflow", specifier = ">=2.20.0" },
     { name = "torch", specifier = ">=2.8.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "trimesh", specifier = ">=4.8.3" },
+]
+
+[[package]]
+name = "platformdirs"
+version = "4.5.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/61/33/9611380c2bdb1225fdef633e2a9610622310fed35ab11dac9620972ee088/platformdirs-4.5.0.tar.gz", hash = "sha256:70ddccdd7c99fc5942e9fc25636a8b34d04c24b335100223152c2803e4063312", size = 21632, upload-time = "2025-10-08T17:44:48.791Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/73/cb/ac7874b3e5d58441674fb70742e6c374b28b0c7cb988d37d991cde47166c/platformdirs-4.5.0-py3-none-any.whl", hash = "sha256:e578a81bb873cbb89a41fcc904c7ef523cc18284b7e3b3ccf06aca1403b7ebd3", size = 18651, upload-time = "2025-10-08T17:44:47.223Z" },
 ]
 
 [[package]]
@@ -1487,6 +1498,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
+]
+
+[[package]]
+name = "pooch"
+version = "1.8.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "platformdirs" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c6/77/b3d3e00c696c16cf99af81ef7b1f5fe73bd2a307abca41bd7605429fe6e5/pooch-1.8.2.tar.gz", hash = "sha256:76561f0de68a01da4df6af38e9955c4c9d1a5c90da73f7e40276a5728ec83d10", size = 59353, upload-time = "2024-06-06T16:53:46.224Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/87/77cc11c7a9ea9fd05503def69e3d18605852cd0d4b0d3b8f15bbeb3ef1d1/pooch-1.8.2-py3-none-any.whl", hash = "sha256:3529a57096f7198778a5ceefd5ac3ef0e4d06a6ddaf9fc2d609b806f25302c47", size = 64574, upload-time = "2024-06-06T16:53:44.343Z" },
 ]
 
 [[package]]
@@ -1659,6 +1684,24 @@ wheels = [
 ]
 
 [[package]]
+name = "pyvista"
+version = "0.46.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "pooch" },
+    { name = "scooby" },
+    { name = "typing-extensions" },
+    { name = "vtk" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/03/3f/701daab844e6f0570d02931b3e4b0b7e04b38f97b9c95d12403645445b23/pyvista-0.46.4.tar.gz", hash = "sha256:37ddd2783a45b552623df293e77ce93ed015244e8d89d1de179d2df594d7c571", size = 2398029, upload-time = "2025-10-30T15:24:13.144Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4f/e5/41a88ce247c606a12498a9297ef323b441b2be811599033a06ea62af0724/pyvista-0.46.4-py3-none-any.whl", hash = "sha256:f113a8db2f49ae1b2f9eeb477c51a4038a4dfdd02ac097900aa49bf1d77f7b2e", size = 2448669, upload-time = "2025-10-30T15:24:11.112Z" },
+]
+
+[[package]]
 name = "requests"
 version = "2.32.5"
 source = { registry = "https://pypi.org/simple" }
@@ -1790,6 +1833,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/c2/e276a237acb09824822b0ada11b028ed4067fdc367a946730979feacb870/scipy-1.16.2-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:b0348d8ddb55be2a844c518cd8cc8deeeb8aeba707cf834db5758fc89b476a2c", size = 38790088, upload-time = "2025-09-11T17:44:53.011Z" },
     { url = "https://files.pythonhosted.org/packages/c6/b4/5c18a766e8353015439f3780f5fc473f36f9762edc1a2e45da3ff5a31b21/scipy-1.16.2-cp314-cp314t-win_amd64.whl", hash = "sha256:26284797e38b8a75e14ea6631d29bda11e76ceaa6ddb6fdebbfe4c4d90faf2f9", size = 39457455, upload-time = "2025-09-11T17:44:58.899Z" },
     { url = "https://files.pythonhosted.org/packages/97/30/2f9a5243008f76dfc5dee9a53dfb939d9b31e16ce4bd4f2e628bfc5d89d2/scipy-1.16.2-cp314-cp314t-win_arm64.whl", hash = "sha256:d2a4472c231328d4de38d5f1f68fdd6d28a615138f842580a8a321b5845cf779", size = 26448374, upload-time = "2025-09-11T17:45:03.45Z" },
+]
+
+[[package]]
+name = "scooby"
+version = "0.11.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d1/d1/a28f3be1503a9c474a4878424bbeb93a55a2ec7d0cb66559aa258e690aea/scooby-0.11.0.tar.gz", hash = "sha256:3dfacc6becf2d6558efa4b625bae3b844ced5d256f3143ebf774e005367e712a", size = 22102, upload-time = "2025-11-01T19:22:53.894Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a3/bb/bbae36d06c0fd670e8373da67096cd57058b57c9bad7d92969b5e3b730af/scooby-0.11.0-py3-none-any.whl", hash = "sha256:a79663d1a7711eb104e4b2935988ea1ed5f7be6b7288fad23b4fba7462832f9d", size = 19877, upload-time = "2025-11-01T19:22:53.046Z" },
 ]
 
 [[package]]
@@ -2059,6 +2111,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/15/22/9ee70a2574a4f4599c47dd506532914ce044817c7752a79b6a51286319bc/urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760", size = 393185, upload-time = "2025-06-18T14:07:41.644Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/c2/fe1e52489ae3122415c51f387e221dd0773709bad6c6cdaa599e8a2c5185/urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc", size = 129795, upload-time = "2025-06-18T14:07:40.39Z" },
+]
+
+[[package]]
+name = "vtk"
+version = "9.5.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/e0/c1d4baa2d9c32fbf7d36bfa49347168b24136232b6536de433e094482e55/vtk-9.5.2-cp313-cp313-macosx_10_10_x86_64.whl", hash = "sha256:1eae5016620a5fd78f4918256ea65dbe100a7c3ce68f763b64523f06aaaeafbc", size = 87078130, upload-time = "2025-09-18T00:57:31.183Z" },
+    { url = "https://files.pythonhosted.org/packages/95/e9/02af96275fd3c4cdf0d55964427c5f70c4a2106c1b6c357726d62e3e6da0/vtk-9.5.2-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:29ad766e308dcaa23b36261180cd9960215f48815b31c7ac2aa52edc88e21ef7", size = 80618932, upload-time = "2025-09-18T00:57:38.197Z" },
+    { url = "https://files.pythonhosted.org/packages/20/d1/c8c4c9b4ff2044fadf4f0d0230a933cc1962e7ba8bca6013737e5773c5c2/vtk-9.5.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:11cf870c05539e9f82f4a5adf450384e0be4ee6cc80274f9502715a4139e2777", size = 112292475, upload-time = "2025-09-18T00:57:46.196Z" },
+    { url = "https://files.pythonhosted.org/packages/87/6d/b0d404822329d3b7eeccd66cf61480cbb66bf1bf6bd2ef8eabedcec8428f/vtk-9.5.2-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:3c4b658d61815cb87177f4e94281396c9be5a28798464a2c6fa0897b1bba282f", size = 103798352, upload-time = "2025-09-18T00:57:52.993Z" },
+    { url = "https://files.pythonhosted.org/packages/07/8f/400d4e4270bd5da3a19ce465aa288c03435e1f38b0344ac2540615ec5b0b/vtk-9.5.2-cp313-cp313-win_amd64.whl", hash = "sha256:974783b8865e2ddc2818d3090705b6bc6bf8ae40346d67f9a43485fabcfb3a99", size = 64000682, upload-time = "2025-09-18T00:57:57.926Z" },
 ]
 
 [[package]]
