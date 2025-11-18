@@ -56,7 +56,7 @@ disk_in_baffle = RayleighDiskInBaffle(
     disk_radius=0.1,
     surface_impedance=0.2,
     piston_velocity=1.0,
-    points_per_wavelength=10,
+    points_per_wavelength=40,
 )
 
 # Derived acoustic quantities
@@ -74,7 +74,7 @@ n_points_y = int(2 * grid_extent / dx_obs)
 n_points_z = int((2 * wavelength) / dx_obs)
 
 # domain lower bound
-lower_bound = 1e-6
+lower_bound = 1e-3
 
 data = GridDiscretisationND.discretise_fn(
     bounds=[
@@ -218,7 +218,7 @@ pinn = HelmholtzPINN.create(
     key=net_key,
 )
 
-# simply use ground truth
+# Simply use ground truth
 velocity_model = lambda params, *_: params
 velocity_params = jnp.array(disk_in_baffle.disk_velocity)
 
@@ -228,13 +228,14 @@ pinn_params = jax.tree.map(
     lambda x: x / jnp.sqrt(2), pinn_params
 )  # scaling due to complex
 
-# Initialize the Adam optimizer with learning rate scheduler
+# Initialize optimizers
+#
 learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
 fwd_optimizer = optax.contrib.split_real_and_imaginary(
     soap(learning_rate, precondition_frequency=2)
 )
+inv_optimizer = optax.contrib.split_real_and_imaginary(optax.sgd(learning_rate))
 
-inv_optimizer = optax.contrib.split_real_and_imaginary(optax.adam(learning_rate))
 fwd_opt_state = fwd_optimizer.init(pinn_params)
 inv_opt_state = inv_optimizer.init(velocity_params)
 
@@ -282,7 +283,7 @@ def inv_train_step(model, params, inv_model, inv_params, opt_state, batch):
 
 
 # Training loop: all the optimization work is done here + logging
-total_steps = int(5e3) + 1
+total_steps = int(20e3) + 1
 for step, data_batch, pde_batch, bnd_batch in tqdm(
     zip(
         range(total_steps),
@@ -307,14 +308,14 @@ for step, data_batch, pde_batch, bnd_batch in tqdm(
     )
 
     # adaptive inverse model
-    velocity_params, inv_opt_state, inv_loss = inv_train_step(
-        pinn,
-        pinn_params,
-        velocity_model,
-        velocity_params,
-        inv_opt_state,
-        batch,
-    )
+    # velocity_params, inv_opt_state, inv_loss = inv_train_step(
+    #     pinn,
+    #     pinn_params,
+    #     velocity_model,
+    #     velocity_params,
+    #     inv_opt_state,
+    #     batch,
+    # )
 
     # Update adaptive weights
     extra_args = {"bnd": (velocity_params, velocity_model)}
@@ -323,10 +324,11 @@ for step, data_batch, pde_batch, bnd_batch in tqdm(
             pinn_params, pinn, batch, losses, extra_args=extra_args
         )
         loss_weights = update_weights(0.9, loss_weights, new_weights)
+        # introduce weights scheduler
 
     if step % log_every == 0:
         logger.log_scalar("loss/total", loss, step)
-        logger.log_scalar("inv/loss", inv_loss, step)
+        # logger.log_scalar("inv/loss", inv_loss, step)
         logger.log_scalar(
             "inv/velocity-error", velocity_params - disk_in_baffle.disk_velocity, step
         )
