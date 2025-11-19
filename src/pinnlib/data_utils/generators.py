@@ -64,10 +64,7 @@ class UniformGenerator(BaseGenerator):
             maxval=jnp.array(maxs),
         )
 
-        # Split coordinates into x, y, z, ...
-        coord_arrays = tuple(coords[:, i] for i in range(coords.shape[1]))
-
-        return coord_arrays
+        return tuple(coords.T)
 
 
 class MeshGenerator(BaseGenerator):
@@ -139,18 +136,12 @@ class MeshGenerator(BaseGenerator):
         these_triangles = self.triangles[idxs]
         these_normals = self.normals[idxs]
 
-        # subsample each triangle
+        # sub-sample each triangle
         coords = vmap(sample_point_on_triangle)(
             these_triangles, key=jnp.array(tri_keys)
         )
 
-        # Split coordinates into x, y, z, ...
-        coord_arrays = tuple(coords[:, i] for i in range(coords.shape[1]))
-        normal_arrays = tuple(
-            these_normals[:, i] for i in range(these_normals.shape[1])
-        )
-
-        return coord_arrays, normal_arrays
+        return tuple(coords.T), tuple(these_normals.T)
 
 
 class DataPointGenerator(BaseGenerator):
@@ -169,7 +160,7 @@ class DataPointGenerator(BaseGenerator):
     ... )
     >>> Generator = DataPointGenerator(batch_size=2, point_cloud=data, key=key)
     >>> infinite_dataloader = iter(Generator)
-    >>> x, y, z, vals = next(infinite_dataloader)
+    >>> (x, y, z), vals = next(infinite_dataloader)
     >>> x.shape == (Generator.num_devices, 2)
     True
     >>> y.shape == (Generator.num_devices, 2)
@@ -200,7 +191,4 @@ class DataPointGenerator(BaseGenerator):
         coords = self.point_cloud.coords[idx]
         vals = self.point_cloud.vals[idx]
 
-        # Split coordinates into x, y, z, ...
-        coord_arrays = tuple(coords[:, i] for i in range(coords.shape[1]))
-
-        return (*coord_arrays, vals)
+        return (tuple(coords.T), vals)
