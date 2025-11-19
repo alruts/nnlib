@@ -13,11 +13,11 @@ from pinnlib.pinn import HelmholtzPINN, WavePINN
 def data_loss(
     params: PyTree,
     model: WavePINN | HelmholtzPINN,
-    coords_vals: tuple[Array],
+    coords_vals: tuple[tuple[Array, ...], Array],
     criterion: Callable = aggregated_metrics["mse"],
     *args,
 ) -> float:
-    *coords, vals = coords_vals
+    coords, vals = coords_vals
     n_dim = len(coords)
 
     # vectorize and parallelize
