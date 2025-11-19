@@ -4,6 +4,8 @@ import optax
 from jax import numpy as jnp
 from jax import random as jrandom
 from matplotlib import pyplot as plt
+from patlib import Path
+from pinnlib.data_utils.data_structures import GridDiscretisationND
 from soap_jax import soap
 from tqdm import tqdm
 
@@ -15,7 +17,6 @@ from pinnlib.data_utils import (
     UniformGenerator,
     subsample,
 )
-from pinnlib.data_utils.data_structures import GridDiscretisationND
 from pinnlib.logger import TensorboardLogger
 from pinnlib.losses import (
     aggregated_metrics,
