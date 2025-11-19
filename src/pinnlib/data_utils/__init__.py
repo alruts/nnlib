@@ -1,9 +1,11 @@
-from .data_structures import (
-    GridDiscretisationND,
-    PointCloud,
-)
 from .generators import DataPointGenerator, MeshGenerator, UniformGenerator
-from .subsample import full_data, grid_sample, random_sample
+from .grid_discretization import (
+    GridDiscretisationND,
+    full_data,
+    grid_sample,
+    random_sample,
+)
+from .point_cloud import PointCloud
 
 __all__ = [
     "PointCloud",

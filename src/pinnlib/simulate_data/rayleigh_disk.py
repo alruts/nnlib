@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from jaxtyping import Array, Complex
 
 from pinnlib import default_medium_density, default_wave_speed
-from pinnlib.data_utils import GridDiscretisationND
+from pinnlib.data_utils.grid_discretization import GridDiscretisationND
 
 jax.config.update("jax_enable_x64", True)
 

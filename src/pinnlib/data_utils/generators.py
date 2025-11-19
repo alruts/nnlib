@@ -7,7 +7,7 @@ from jax import Array, local_device_count, pmap, vmap
 from jax import random as jrandom
 from jaxtyping import PRNGKeyArray
 
-from pinnlib.data_utils.data_structures import PointCloud, Triangle
+from pinnlib.data_utils.point_cloud import PointCloud
 from pinnlib.misc import default_floating_dtype
 
 
@@ -118,7 +118,7 @@ class MeshGenerator(BaseGenerator):
 
     @partial(pmap, static_broadcasted_argnums=(0,))
     def gen_data(self, *, key: PRNGKeyArray):
-        def sample_point_on_triangle(tri: Triangle, *, key: PRNGKeyArray):
+        def sample_point_on_triangle(tri: Array, *, key: PRNGKeyArray):
             key, subkey = jrandom.split(key)
             uv = jrandom.uniform(subkey, shape=(2,))
             u, v = uv[0], uv[1]
