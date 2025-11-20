@@ -1,3 +1,4 @@
+from . import pc_utils as pc_utils
 from .generators import DataPointGenerator, MeshGenerator, UniformGenerator
 from .point_cloud import PointCloud
 
@@ -6,4 +7,5 @@ __all__ = [
     "UniformGenerator",
     "DataPointGenerator",
     "MeshGenerator",
+    "pc_utils",
 ]
