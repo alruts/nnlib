@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 from functools import partial
 
+import jax
 import jax.numpy as jnp
 import trimesh
 from jax import Array, local_device_count, pmap, vmap
@@ -153,10 +154,12 @@ class DataPointGenerator(BaseGenerator):
     >>> import jax.numpy as jnp
     >>> key = jrandom.PRNGKey(42)
     >>> data = PointCloud(
-    ...     coords=jnp.array([[1.0, 2.0, 3.0],
-    ...                       [4.0, 5.0, 6.0],
-    ...                       [7.0, 8.0, 9.0]]),
-    ...     vals=jnp.array([10.0, 20.0, 30.0])
+    ...    coords=(
+    ...        jnp.array([1.0, 2.0, 3.0]),
+    ...        jnp.array([4.0, 5.0, 6.0]),
+    ...        jnp.array([7.0, 8.0, 9.0]),
+    ...    ),
+    ...    vals=jnp.array([10.0, 20.0, 30.0]),
     ... )
     >>> Generator = DataPointGenerator(batch_size=2, point_cloud=data, key=key)
     >>> infinite_dataloader = iter(Generator)
@@ -186,9 +189,9 @@ class DataPointGenerator(BaseGenerator):
             key,
             shape=(self.batch_size,),
             minval=0,
-            maxval=self.point_cloud.coords.shape[0],
+            maxval=len(self),
         )
-        coords = self.point_cloud.coords[idx]
+        coords = jax.tree.map(lambda x: x[idx], self.point_cloud.coords)
         vals = self.point_cloud.vals[idx]
 
-        return (tuple(coords.T), vals)
+        return (coords, vals)
