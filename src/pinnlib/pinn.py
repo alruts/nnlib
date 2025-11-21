@@ -5,7 +5,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from diffrax import Dopri5, ODETerm, SaveAt, diffeqsolve
-from jaxtyping import Complex, Float, PyTree
+from jaxtyping import Float, PyTree, Scalar
 
 from pinnlib.architectures import (
     ModifiedMLP,
@@ -28,6 +28,264 @@ arch_lib = {
     "siren": make_siren,
     "pirate_net": PirateNet,
 }
+
+
+def wave_residual(
+    model: Callable,
+    params: PyTree,
+    *coords: Scalar,
+    wave_speed: float,
+    rhs: Callable = lambda *_: 0.0,
+) -> Scalar:
+    """
+    Compute the wave-equation PDE residual:
+        R = ∇² p − (1/c²) p_tt - rhs(x, t)
+
+    >>> # Polynomial model
+    >>> polynomial = lambda params, x, t: x**3 + t**3
+    >>> params = {}  # no parameters
+    >>> analytic = lambda x, t: 6 * x - (1/4) * 6 * t
+    >>> wave_speed = 2.0
+    >>> x0, t0 = 1.0, 1.0
+    >>> print(
+    ...     jnp.isclose(
+    ...         wave_residual(polynomial, params, x0, t0, wave_speed=wave_speed),
+    ...         analytic(x0, t0)
+    ...     )
+    ... )
+    True
+
+    """
+
+    def p_fn(*x):
+        return model(params, *x)
+
+    second_derivs = [
+        jax.grad(lambda *x: jax.grad(p_fn, arg)(*x), arg)(*coords)
+        for arg in range(len(coords))
+    ]
+
+    p_tt = jnp.array(second_derivs[-1])
+    laplacian = jnp.sum(jnp.array(second_derivs[:-1]))
+
+    return laplacian - (1.0 / wave_speed**2) * p_tt - rhs(*coords)
+
+
+def wave_directional_velocity(
+    model: Callable,
+    params: PyTree,
+    *args: Scalar,
+    medium_density: float,
+    saveat: SaveAt = SaveAt(t1=True),
+) -> Scalar:
+    """
+    Compute directional particle velocity v(x,t) in the time domain.
+    Arguments:
+        *args = (x1, x2, ..., t, nx, ny, ...)
+
+    >>> import jax
+    >>> import jax.numpy as jnp
+    >>> from diffrax import SaveAt
+
+    >>> # Trivial plane wave model
+    >>> plane_wave = lambda params, x, t: jnp.sin(t - x)
+    >>> medium_density = 1.0
+    >>> analytic = lambda x, t: -(-jnp.sin(t - x) - jnp.sin(x))
+    >>> params = {}  # no parameters
+
+    >>> # Single point at t=0
+    >>> x0, t0 = 0.0, 0.0
+    >>> print(
+    ...     jnp.isclose(
+    ...         wave_directional_velocity(plane_wave, params, x0, t0, 1.0, medium_density=medium_density),
+    ...         analytic(x0, t0)
+    ...     )
+    ... )
+    True
+
+    >>> # Single point at t=pi/2
+    >>> x1, t1 = jnp.pi/2, jnp.pi/2
+    >>> print(
+    ...     jnp.isclose(
+    ...     wave_directional_velocity(plane_wave, params, x1, t1, 1.0, medium_density=medium_density),
+    ...     analytic(x1, t1)
+    ...     )
+    ... )
+    True
+
+    >>> # Multiple time points using SaveAt
+    >>> ts = jnp.array([0.0, jnp.pi/4, jnp.pi/2])
+    >>> vs = wave_directional_velocity(plane_wave, params, x1, t1, 1.0, saveat=SaveAt(ts=ts), medium_density=medium_density)
+    >>> print(jnp.allclose(vs, analytic(x1, ts)))
+    True
+    """
+    ndim = len(args) // 2
+    coords, tangent = args[: ndim + 1], args[ndim + 1 :]
+    *spatial_point, time = coords
+
+    def p_fn(*x):
+        return model(params, *x)
+
+    def dpdn_time_derivative(t, y, _):
+        _, dpdn = jax.jvp(p_fn, (*spatial_point, t), (*tangent, 0.0))
+        return dpdn
+
+    term = ODETerm(dpdn_time_derivative)
+    solver = Dopri5()
+
+    sol = diffeqsolve(term, solver, t0=0.0, t1=time, dt0=0.01, y0=0.0, saveat=saveat)
+
+    if sol.ys is None:
+        raise RuntimeError("Directional velocity integration failed.")
+
+    return -sol.ys.squeeze() / medium_density
+
+
+def wave_impedance(
+    params: PyTree,
+    model: Callable,
+    *args: Scalar,
+    wave_speed: float,
+    medium_density: float,
+) -> Scalar:
+    """Normalized acoustic impedance Z / (ρc) in the time domain."""
+    ndim = len(args) // 2
+    coords = args[: ndim + 1]
+
+    p = model(params, *coords)
+    v = wave_directional_velocity(model, params, *args, medium_density=medium_density)
+
+    return p / (v * medium_density * wave_speed)
+
+
+def helmholtz_residual(
+    model: Callable,
+    params: PyTree,
+    *args: Scalar,
+    wave_speed: float,
+    frequency: float,
+    rhs: Callable = lambda *_: 0.0,
+) -> Scalar:
+    """Computation of PDE residual for variable spatial dimensions.
+
+    Validation with a polynomial model:
+
+    >>> import jax.numpy as jnp
+    >>> import equinox as eqx
+    >>> frequency = 1.0
+    >>> wave_speed = 1.0
+    >>> k = 2 * jnp.pi * frequency / wave_speed
+    >>> params = {}
+    >>> polynomial = lambda params, x, y: x**3 + y**3 * 1j
+    >>> analytic = lambda x, y: (6 * x + 6 * y * 1j) + k**2 * polynomial(params, x, y)
+    >>> x0, y0 = 1.0, 1.0
+    >>> print(
+    ...     jnp.isclose(
+    ...     helmholtz_residual(polynomial, params, x0, y0, wave_speed=1.0, frequency=1.0),
+    ...     analytic(x0, y0)
+    ...     )
+    ... )
+    True
+    """
+
+    @args_to_array
+    def p_split(*x):
+        return jnp.array([model(params, *x).real, model(params, *x).imag])
+
+    hess_split = jax.hessian(p_split)(jnp.array(args))
+    hessian = hess_split[0] + 1j * hess_split[1]
+    laplacian = jnp.trace(hessian)
+
+    k = (2 * jnp.pi * frequency) / wave_speed
+
+    return laplacian + (k**2) * model(params, *args) - rhs(*args)
+
+
+def helmholtz_directional_velocity(
+    model: Callable,
+    params: PyTree,
+    *args: Scalar,
+    frequency,
+    medium_density,
+) -> Scalar:
+    """
+    Compute directional velocity via Euler's equation of motion.
+
+    Arguments:
+        params: Model parameters
+        *args: (coordinates..., tangents...) where
+            | coordinates = spatial coordinates x, y, z, ...
+            | tangents = unit normal vector components nx, ny, nz, ...
+
+    Validation with polynomial:
+
+    >>> import jax.numpy as jnp
+    >>> import equinox as eqx
+    >>> medium_density = 1.0
+    >>> frequency = 1.0
+    >>> params = {}
+    >>> p_fn = lambda params, x, y: x**2 + 1j * y**2
+    >>> analytic_x = lambda x, y: -1.0 / (1j * 2.0 * jnp.pi * frequency * medium_density) * 2*x
+    >>> analytic_y = lambda x, y: -1.0 / (1j * 2.0 * jnp.pi * frequency * medium_density) * 2j*y
+    >>> x0, y0 = 1.0, 1.0
+    >>> print(
+    ...     jnp.isclose(
+    ...     helmholtz_directional_velocity(p_fn, params, x0, y0, 1.0, 0.0, medium_density=medium_density, frequency=frequency),
+    ...     analytic_x(x0, y0)
+    ...     )
+    ... )
+    True
+
+    >>> print(
+    ...     jnp.isclose(
+    ...     helmholtz_directional_velocity(p_fn, params, x0, y0, 0.0, 1.0, medium_density=medium_density, frequency=frequency),
+    ...     analytic_y(x0, y0)
+    ...     )
+    ... )
+    True
+
+    """
+
+    # map return type from C to R^2
+    def p_fn(*x):
+        return model(params, *x)
+
+    # number of spatial dimensions
+    ndim = len(args) // 2
+    coords, tangent = args[:ndim], args[ndim:]
+
+    # directional derivative via Jacobi-vector product
+    _, dpdn = jax.jvp(p_fn, coords, tangent)
+
+    return -1.0 / (1j * 2.0 * jnp.pi * frequency * medium_density) * dpdn
+
+
+def helmholtz_impedance(
+    model: Callable,
+    params: PyTree,
+    *args: Scalar,
+    frequency,
+    wave_speed,
+    medium_density,
+) -> Scalar:
+    """
+    Compute directional impedance normalized to the medium.
+
+    Arguments:
+      params: Model parameters
+      args: (coordinates..., tangents...) where
+        - coordinates = spatial coordinates x, y, z, ...
+        - tangents = unit normal vector components nx, ny, nz, ...
+
+    """
+    ndim = len(args) // 2
+    coords = args[:ndim]
+
+    Z = model(params, *coords) / helmholtz_directional_velocity(
+        params, *args, medium_density=medium_density, frequency=frequency
+    )
+
+    return Z / (medium_density * wave_speed)
 
 
 class WavePINN(eqx.Module):
@@ -79,7 +337,7 @@ class WavePINN(eqx.Module):
             medium_density=medium_density,
         )
 
-    def p_net(self, params: PyTree, *args: Float) -> Float:
+    def __call__(self, params: PyTree, *args: Float) -> Float:
         """Forward computation of pressure"""
         x = jnp.stack(args)
 
@@ -90,111 +348,24 @@ class WavePINN(eqx.Module):
 
         return apply_model(self.model, params, x)
 
-    def r_net(self, params: PyTree, *args: Float) -> Float:
-        """Computation of PDE residual for variable spatial dimensions.
-
-        Validation with a polynomial model:
-            >>> import jax.numpy as jnp
-            >>> import equinox as eqx
-            >>> polynomial = lambda x: x[0]**3 + x[1]**3
-            >>> wave_speed = 2.0
-            >>> pinn = WavePINN(model=polynomial, wave_speed=wave_speed)
-            >>> params = eqx.filter(pinn.model, eqx.is_array)
-            >>> print(pinn.r_net(params, 1.0, -1.0)) # 6(1) - (6/4)(-1) = 7.5
-            7.5
-        """
-
-        def p_fn(*x):
-            return self.p_net(params, *x)
-
-        second_derivs = [
-            jax.grad(lambda *x: jax.grad(p_fn, argnum)(*x), argnum)(*args)
-            for argnum in range(len(args))
-        ]
-
-        p_tt = jnp.array(second_derivs[-1])
-        laplacian = jnp.sum(jnp.array(second_derivs[:-1]))
-
-        return laplacian - (1.0 / self.wave_speed**2) * p_tt
-
-    def v_net(self, params: PyTree, *args: Float, saveat=SaveAt(t1=True)) -> Float:
-        """Computation of PDE residual for variable spatial dimensions.
-
-        Arguments:
-            params: Model parameters
-            *args: (coordinates..., tangents...) where
-                | coordinates = time-spatial coordinates x, y, ..., t
-                | tangents = unit normal vector components nx, ny, ...
-
-            saveat: specify time steps to return see `diffrax.SaveAt`. Defaults to t.
-
-        >>> plane_wave = lambda x: jnp.sin(x[1] - x[0])
-        >>> analytic = lambda x, t : -(-jnp.sin(t - x) - jnp.sin(x))
-        >>> pinn = WavePINN(model=plane_wave, medium_density=1.0, wave_speed=1.0)
-        >>> params = eqx.filter(pinn.model, eqx.is_array)
-
-        >>> # It is safe to query at t=0
-        >>> x0, t0 = 0.0, 0.0
-        >>> print(jnp.isclose(pinn.v_net(params, x0, t0, 1.0), 0.0))
-        True
-
-        >>> # Test against analytic solution
-        >>> x1, t1 = jnp.pi / 2, jnp.pi / 2
-        >>> print(jnp.isclose(pinn.v_net(params, x1, t1, 1.0), analytic(x1, t1)))
-        True
-
-        # many points with saveat
-        >>> ts = jnp.array([0, jnp.pi/4, jnp.pi/2])
-        >>> vs = pinn.v_net(params, x1, t1, 1.0, saveat=SaveAt(ts=ts))
-        >>> print(jnp.allclose(vs, analytic(x1, ts)))
-        True
-        """
-
-        # spatial dimensions
-        ndim = len(args) // 2
-
-        # tangent has no time component
-        coords, tangent = args[: ndim + 1], args[ndim + 1 :]
-        *point, time = coords
-
-        def p_fn(*x):
-            return self.p_net(params, *x)
-
-        def grad_p_fn(t, y, args):
-            _, grad_p = jax.jvp(p_fn, (*point, t), (*tangent, 0.0))
-            return grad_p
-
-        # time integrate grad_p
-        term = ODETerm(grad_p_fn)
-        solver = Dopri5()
-        y0 = 0.0  # initial condition
-
-        solution = diffeqsolve(
-            term, solver, t0=0, t1=time, dt0=0.01, y0=y0, saveat=saveat
+    def residual(self, params: PyTree, *args: Scalar, rhs=lambda *_: 0.0) -> Scalar:
+        return wave_residual(
+            params, self.model, *args, rhs=rhs, wave_speed=self.wave_speed
         )
 
-        if solution.ys is not None:
-            int_p_dt = solution.ys.squeeze()
-            return -1.0 / self.medium_density * int_p_dt
-        else:
-            return RuntimeError("Numerical integration failed :(")
+    def velocity(self, params: PyTree, *args: Scalar) -> Scalar:
+        return wave_directional_velocity(
+            params, self.model, *args, medium_density=self.medium_density
+        )
 
-    def z_net(self, params: PyTree, *args: Float) -> Float:
-        """
-        Compute directional impedance normalized to the medium.
-
-        Arguments:
-            params: Model parameters
-            *args: (coordinates..., tangents...) where
-                | coordinates = time-spatial coordinates x, y, ..., t
-                | tangents = unit normal vector components nx, ny, ...
-            saveat: specify time steps to return see `diffrax.SaveAt`. Defaults to t.
-        """
-        ndim = len(args) // 2
-        coords = args[: ndim + 1]  # time has no tangent component
-
-        Z = self.p_net(params, *coords) / self.v_net(params, *args)
-        return Z / (self.medium_density * self.wave_speed)
+    def impedance(self, params: PyTree, *args: Scalar) -> Scalar:
+        return wave_impedance(
+            params,
+            self.model,
+            *args,
+            wave_speed=self.wave_speed,
+            medium_density=self.medium_density,
+        )
 
 
 class HelmholtzPINN(eqx.Module):
@@ -249,7 +420,7 @@ class HelmholtzPINN(eqx.Module):
             medium_density=medium_density,
         )
 
-    def p_net(self, params: PyTree, *args: Float) -> Complex:
+    def __call__(self, params: PyTree, *args: Scalar) -> Scalar:
         """Forward computation of pressure"""
         x = jnp.stack(args)
         x = jnp.asarray(x, dtype=jnp.result_type(x, *jax.tree.leaves(params)))
@@ -261,90 +432,31 @@ class HelmholtzPINN(eqx.Module):
 
         return apply_model(self.model, params, x)
 
-    def r_net(self, params: PyTree, *args: Float) -> Complex:
-        """Computation of PDE residual for variable spatial dimensions.
+    def residual(self, params: PyTree, *args: Scalar, rhs=lambda *_: 0.0) -> Scalar:
+        return helmholtz_residual(
+            self,
+            params,
+            *args,
+            rhs=rhs,
+            wave_speed=self.wave_speed,
+            frequency=self.frequency,
+        )
 
-        Validation with a polynomial model:
-            >>> import jax.numpy as jnp
-            >>> import equinox as eqx
-            >>> polynomial = lambda x: x[0]**3 + x[1]**3 * 1j
-            >>> wave_speed = 2.0 * jnp.pi
-            >>> pinn = HelmholtzPINN(model=polynomial, frequency=1, wave_speed=wave_speed)
-            >>> params = eqx.filter(pinn.model, eqx.is_array)
-            >>> print(pinn.r_net(params, 1.0, 1.0)) # (6 + 6j) + (1 + 1j)
-            (7+7j)
+    def velocity(self, params: PyTree, *args: Scalar) -> Scalar:
+        return helmholtz_directional_velocity(
+            self,
+            params,
+            *args,
+            medium_density=self.medium_density,
+            frequency=self.frequency,
+        )
 
-        Validation with an analytical Helmholtz solution (residual should be ~0):
-            >>> u_analytic = lambda x: jnp.exp(1j * x[0])  # 1D Helmholtz solution for k=1
-            >>> wave_speed = 2.0 * jnp.pi
-            >>> pinn = HelmholtzPINN(model=u_analytic, frequency=1, wave_speed=wave_speed)
-            >>> params = eqx.filter(pinn.model, eqx.is_array)
-            >>> r = pinn.r_net(params, 0.5)  # Evaluate at x=0.5
-            >>> print(r)
-            0j
-        """
-
-        @args_to_array
-        def p_split(*x):
-            return jnp.array([self.p_net(params, *x).real, self.p_net(params, *x).imag])
-
-        hess_split = jax.hessian(p_split)(jnp.array(args))
-        hessian = hess_split[0] + 1j * hess_split[1]
-        laplacian = jnp.trace(hessian)
-
-        k = (2 * jnp.pi * self.frequency) / self.wave_speed
-
-        return laplacian + (k**2) * self.p_net(params, *args)
-
-    def v_net(self, params: PyTree, *args: Float) -> Complex:
-        """
-        Compute directional velocity via Euler's equation of motion.
-
-        Arguments:
-            params: Model parameters
-            *args: (coordinates..., tangents...) where
-                | coordinates = spatial coordinates x, y, z, ...
-                | tangents = unit normal vector components nx, ny, nz, ...
-
-        Validation with polynomial:
-            >>> import jax.numpy as jnp
-            >>> import equinox as eqx
-            >>> p_fn = lambda x: x[0]**2 + 1j * x[1]**2
-            >>> pinn = HelmholtzPINN(model=p_fn, frequency=1.0/(2.0 * jnp.pi), medium_density=1.0)
-            >>> params = eqx.filter(pinn.model, eqx.is_array)
-            >>> print(pinn.v_net(params, 0.0, 1.0, 0.0, 1.0))
-            (-2+0j)
-            >>> print(pinn.v_net(params, 1.0, 0.0, 1.0, 0.0))
-            2j
-        """
-
-        # map return type from C to R^2
-        def p_fn(*x):
-            return self.p_net(params, *x)
-
-        # number of spatial dimensions
-        ndim = len(args) // 2
-        coords, tangent = args[:ndim], args[ndim:]
-
-        # directional derivative via Jacobi-vector product
-        _, dpdn = jax.jvp(p_fn, coords, tangent)
-
-        return -1.0 / (1j * 2.0 * jnp.pi * self.frequency * self.medium_density) * dpdn
-
-    def z_net(self, params: PyTree, *args: Float) -> Complex:
-        """
-        Compute directional impedance normalized to the medium.
-
-        Arguments:
-          params: Model parameters
-          args: (coordinates..., tangents...) where
-            - coordinates = spatial coordinates x, y, z, ...
-            - tangents = unit normal vector components nx, ny, nz, ...
-
-        """
-        ndim = len(args) // 2
-        coords = args[:ndim]
-
-        Z = self.p_net(params, *coords) / self.v_net(params, *args)
-
-        return Z / (self.medium_density * self.wave_speed)
+    def impedance(self, params: PyTree, *args: Scalar) -> Scalar:
+        return helmholtz_impedance(
+            self,
+            params,
+            *args,
+            wave_speed=self.wave_speed,
+            medium_density=self.medium_density,
+            frequency=self.frequency,
+        )

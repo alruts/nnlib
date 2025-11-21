@@ -8,7 +8,7 @@ from jax import Array, local_device_count, pmap, vmap
 from jax import random as jrandom
 from jaxtyping import PRNGKeyArray
 
-from pinnlib.data_utils.point_cloud import PointCloud
+from pinnlib.data_utils.point_cloud import Coords, PointCloud, Vecs
 from pinnlib.misc import default_floating_dtype
 
 
@@ -56,7 +56,7 @@ class UniformGenerator(BaseGenerator):
         self.bounds = bounds
 
     @partial(pmap, static_broadcasted_argnums=(0,))
-    def gen_data(self, *, key: PRNGKeyArray):
+    def gen_data(self, *, key: PRNGKeyArray) -> Coords:
         mins, maxs = zip(*self.bounds)
         coords = jrandom.uniform(
             key,
@@ -115,7 +115,7 @@ class MeshGenerator(BaseGenerator):
         )
 
     @partial(pmap, static_broadcasted_argnums=(0,))
-    def gen_data(self, *, key: PRNGKeyArray):
+    def gen_data(self, *, key: PRNGKeyArray) -> tuple[Coords, Vecs]:
         def sample_point_on_triangle(tri: Array, *, key: PRNGKeyArray):
             key, subkey = jrandom.split(key)
             uv = jrandom.uniform(subkey, shape=(2,))
@@ -184,7 +184,7 @@ class DataPointGenerator(BaseGenerator):
         return len(self.point_cloud.vals)
 
     @partial(pmap, static_broadcasted_argnums=(0,))
-    def gen_data(self, *, key):
+    def gen_data(self, *, key) -> PointCloud:
         idx = jrandom.randint(
             key,
             shape=(self.batch_size,),
@@ -194,4 +194,4 @@ class DataPointGenerator(BaseGenerator):
         coords = jax.tree.map(lambda x: x[idx], self.point_cloud.coords)
         vals = self.point_cloud.vals[idx]
 
-        return (coords, vals)
+        return PointCloud(coords, vals)

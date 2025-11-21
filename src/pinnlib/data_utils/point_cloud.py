@@ -1,13 +1,14 @@
-from collections.abc import Callable, Sequence
-from functools import reduce
 from typing import NamedTuple
 
-import jax
-from jax import numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, Scalar
 
 # base data annotations
-Coords = tuple[Array, ...]  # tuple of 1D arrays
+Coords = tuple[Array, ...]
+Coord = tuple[Scalar, ...]
+Vecs = tuple[Array, ...]
+Vec = tuple[Scalar, ...]
+CoordsVecs = tuple[Array, ...]
+CoordVec = tuple[Scalar, ...]
 Vals = Array
 
 

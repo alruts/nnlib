@@ -4,8 +4,9 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 from equinox import filter_jit
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
+from pinnlib.data_utils import Coords, PointCloud
 from pinnlib.metrics import aggregated_metrics
 from pinnlib.pinn import HelmholtzPINN, WavePINN
 
@@ -13,62 +14,38 @@ from pinnlib.pinn import HelmholtzPINN, WavePINN
 def data_loss(
     params: PyTree,
     model: WavePINN | HelmholtzPINN,
-    coords_vals: tuple[tuple[Array, ...], Array],
+    pressure_pc: PointCloud,
     criterion: Callable = aggregated_metrics["mse"],
     *args,
 ) -> float:
-    coords, vals = coords_vals
+    coords, vals = pressure_pc
     n_dim = len(coords)
 
     # vectorize and parallelize
-    batched_p_net = jax.vmap(model.p_net, in_axes=(None, *[0] * n_dim))
-    parallel_p_net = jax.pmap(batched_p_net, in_axes=(None, *[0] * n_dim))
+    batched_fn = jax.vmap(model, in_axes=(None, *[0] * n_dim))
+    parallelized_fn = jax.pmap(batched_fn, in_axes=(None, *[0] * n_dim))
 
     # make prediction
-    pred = parallel_p_net(params, *coords)
+    pred = parallelized_fn(params, *coords)
     return criterion(pred, vals)  # error measure
 
 
 def hom_pde_loss(
     params: PyTree,
     model: WavePINN,
-    coords: tuple[Array],
+    coords: Coords,
     criterion: Callable = aggregated_metrics["mse"],
     *args,
 ) -> float:
     n_dim = len(coords)
 
     # vectorize and parallelize
-    batched_r_net = jax.vmap(model.r_net, in_axes=(None, *[0] * n_dim))
+    batched_r_net = jax.vmap(model.residual, in_axes=(None, *[0] * n_dim))
     parallel_r_net = jax.pmap(batched_r_net, in_axes=(None, *[0] * n_dim))
 
     # make prediction
     pred = parallel_r_net(params, *coords)
     return criterion(pred, 0.0)  # error measure
-
-
-def pressure_model_loss(
-    forward_params: PyTree,
-    forward_model: HelmholtzPINN,
-    inverse_params: PyTree,
-    inverse_model: HelmholtzPINN,
-    coords: tuple[Array],
-    criterion: Callable = aggregated_metrics["mse"],
-    *args,
-) -> float:
-    n_dim = len(coords)
-
-    # vectorize and parallelize
-    batched_fwd_model = jax.vmap(forward_model.p_net, in_axes=(None, *[0] * n_dim))
-    parallel_fwd_model = jax.pmap(batched_fwd_model, in_axes=(None, *[0] * n_dim))
-
-    batched_inv_model = jax.vmap(inverse_model.p_net, in_axes=(None, *[0] * n_dim))
-    parallel_inv_model = jax.pmap(batched_inv_model, in_axes=(None, *[0] * n_dim))
-
-    fwd_pred = parallel_fwd_model(forward_params, *coords)
-    inv_pred = parallel_inv_model(inverse_params, *coords)
-
-    return criterion(fwd_pred, inv_pred)
 
 
 def compute_loss(
@@ -156,3 +133,8 @@ def update_weights(
     weights = jax.tree.map(running_average, old_weights, new_weights)
     weights = jax.lax.stop_gradient(weights)
     return weights
+
+
+@filter_jit
+def compute_mask(val: ArrayLike, a: ArrayLike, b: ArrayLike, C: ArrayLike):
+    return jnp.exp(-(a / b) * val) * C

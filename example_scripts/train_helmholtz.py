@@ -4,8 +4,6 @@ import optax
 from jax import numpy as jnp
 from jax import random as jrandom
 from matplotlib import pyplot as plt
-from patlib import Path
-from pinnlib.data_utils.data_structures import GridDiscretisationND
 from soap_jax import soap
 from tqdm import tqdm
 
@@ -15,7 +13,7 @@ from pinnlib.activations import (
 from pinnlib.data_utils import (
     DataPointGenerator,
     UniformGenerator,
-    subsample,
+    pc_utils,
 )
 from pinnlib.logger import TensorboardLogger
 from pinnlib.losses import (
@@ -44,7 +42,7 @@ data_key, subsample_key, net_key, emb_key, dom_key = jrandom.split(seed_key, 5)
 # and to load random batches of data points
 #
 
-FREQUENCY = 10
+FREQUENCY = 440
 
 
 def point_source(x, x0=jnp.array([1.0, 1.0]), A=1 + 1j, f=FREQUENCY):
@@ -53,21 +51,18 @@ def point_source(x, x0=jnp.array([1.0, 1.0]), A=1 + 1j, f=FREQUENCY):
     return A * (jnp.exp(-1j * k * R) / R)
 
 
-data = GridDiscretisationND.discretise_fn(
-    [(-0.5, 0.5), (-0.5, 0.5)], n_points=[256, 256], fn=point_source
+points_per_axis = [256, 256]
+dense_pressure_pc = pc_utils.discretise_fn(
+    [(-0.5, 0.5), (-0.5, 0.5)], n_points=points_per_axis, fn=point_source
 )
 
 datasets = [
     DataPointGenerator(
-        point_cloud=subsample.random_sample(
-            data,
-            num_points=n,
-            key=subsample_key,
-        ),  # returns `PointCloud` with random samples
+        point_cloud=pc_utils.sample_points(subsample_key, n)(dense_pressure_pc),
         batch_size=n,
         key=data_key,
     )
-    for n in [8, 16, 32, 64, 128, 256, 512]
+    for n in [8, 64, 256]
 ]
 
 domain_sampler = UniformGenerator([(-1, 1), (-1, 1)], batch_size=128, key=dom_key)
@@ -86,13 +81,12 @@ loss_weights = {key: jnp.array(1.0) for key in losses.keys()}
 
 # Helper to make predictions for logging
 @eqx.filter_jit
-def compute_pressure(params, pinn):
+def compute_pressure(params, pressure_field):
     """Evaluates pressure over the same grid as original dataset"""
-    X, T = data.coordinate_arrays
-
-    # Map p_net to accept mesh-grids for x and t
-    p = grid_map(pinn.p_net, axis_mask=(0, 1, 1))
-    return p(params, X, T)
+    X, T = jax.tree.map(lambda x: x.reshape(*points_per_axis), dense_pressure_pc.coords)
+    p_fn = grid_map(pressure_field, axis_mask=(0, 1, 1))
+    p_val = p_fn(params, X, T)
+    return p_val
 
 
 #
@@ -106,29 +100,37 @@ for dataset in datasets:
 
     # Helper to make plots for logging
     def plot_pred(pressure):
+        X, T, pressure = jax.tree.map(
+            lambda x: x.reshape(*points_per_axis), (*dense_pressure_pc.coords, pressure)
+        )
         fig = plt.figure(figsize=(6, 5))
         plt.pcolormesh(
-            *data.coordinate_arrays,
+            X,
+            T,
             pressure,
             shading="auto",
             cmap="jet",
         )
         plt.colorbar(label="Pressure")
-        plt.scatter(*dataset.point_cloud.coords.T, color="k")
+        plt.scatter(*dataset.point_cloud.coords, color="k")  # type: ignore
         plt.xlabel("x")
         plt.ylabel("y")
         return fig
 
     # initialize logger
     logger = TensorboardLogger(experiment_name=f"test-run_{len(dataset)}")
-    logger.log_plot("plots/gt_re", plot_pred, data.vals.real, 0)  # to visually compare
-    logger.log_plot("plots/gt_im", plot_pred, data.vals.imag, 0)  # to visually compare
-    log_every = 1000
+    logger.log_plot(
+        "plots/gt_re", plot_pred, dense_pressure_pc.vals.real, 0
+    )  # to visually compare
+    logger.log_plot(
+        "plots/gt_im", plot_pred, dense_pressure_pc.vals.imag, 0
+    )  # to visually compare
+    log_every = 100
 
     # build PINN
-    pinn = HelmholtzPINN.create(
+    pressure_field = HelmholtzPINN.create(
         embedding=None,
-        arch_name="siren",
+        arch_name="modified_siren",
         frequency=FREQUENCY,
         in_size=2,
         out_size="scalar",
@@ -141,11 +143,11 @@ for dataset in datasets:
     )
 
     # Extract the trainable parameters of the neural-net as a `PyTree`
-    params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
+    params, _ = eqx.partition(pressure_field.model, filter_spec=eqx.is_array)
     params = jax.tree.map(lambda x: x / jnp.sqrt(2), params)  # scaling due to complex
 
     # Initialize the Adam optimizer with learning rate scheduler
-    learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
+    learning_rate = optax.schedules.exponential_decay(1e-3, 200, 0.9)
     # optimizer = optax.contrib.split_real_and_imaginary(optax.adam(learning_rate))
     optimizer = optax.contrib.split_real_and_imaginary(
         soap(learning_rate, precondition_frequency=2)
@@ -178,7 +180,7 @@ for dataset in datasets:
     # Training loop: all the optimization work is done here + logging
     #
 
-    total_steps = int(4e3) + 1
+    total_steps = int(1e3) + 1
     for step, data_batch, pde_batch in tqdm(
         zip(range(total_steps), infinite_dataloader, infinite_point_generator),
         total=total_steps,
@@ -188,12 +190,12 @@ for dataset in datasets:
 
         # Do step
         params, opt_state, (loss, individual_losses) = train_step(
-            pinn, params, opt_state, loss_weights, batch
+            pressure_field, params, opt_state, loss_weights, batch
         )
 
         # Update adaptive weights
         if step % update_weights_every == 0:
-            new_weights = compute_weights(params, pinn, batch, losses)
+            new_weights = compute_weights(params, pressure_field, batch, losses)
             loss_weights = update_weights(0.9, loss_weights, new_weights)
 
         # Write to logger
@@ -207,18 +209,20 @@ for dataset in datasets:
                 logger.log_scalar(f"loss/{term}", loss / loss_weights.get(term), step)
 
             # make a prediction
-            pred = compute_pressure(params, pinn)
+            pred = compute_pressure(params, pressure_field)
 
             # aggregated metrics
             pred_error = split_real_and_imaginary_metric(aggregated_metrics["mse"])(
-                pred, data.vals
+                pred.ravel(), dense_pressure_pc.vals
             )
             logger.log_scalar("error/mse_re", pred_error.real, step)
             logger.log_scalar("error/mse_im", pred_error.imag, step)
 
             # compute point-wise metrics
             for metric, fn in point_wise_metrics.items():
-                error = split_real_and_imaginary_metric(fn)(pred, data.vals)
+                error = split_real_and_imaginary_metric(fn)(
+                    pred.ravel(), dense_pressure_pc.vals
+                )
                 logger.log_plot(f"errors/{metric}_re", plot_pred, error.real, step)
                 logger.log_plot(f"errors/{metric}_im", plot_pred, error.imag, step)
 
