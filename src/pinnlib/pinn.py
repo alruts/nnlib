@@ -7,18 +7,18 @@ import jax.numpy as jnp
 from diffrax import Dopri5, ODETerm, SaveAt, diffeqsolve
 from jaxtyping import Float, PyTree, Scalar
 
-from pinnlib.architectures import (
-    ModifiedMLP,
-    PirateNet,
-    make_modified_siren,
-    make_siren,
-)
 from pinnlib.feature_maps import PeriodicFeatures, RandomFourierFeatures
 from pinnlib.misc import (
     apply_model,
     args_to_array,
     default_medium_density,
     default_wave_speed,
+)
+from pinnlib.nn import (
+    ModifiedMLP,
+    PirateNet,
+    make_modified_siren,
+    make_siren,
 )
 
 arch_lib = {

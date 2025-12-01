@@ -99,7 +99,6 @@ class TensorboardLogger:
 #
 
 if __name__ == "__main__":
-
     logger = TensorboardLogger(experiment_name="jax_demo")
 
     logger.log_hparams(

@@ -3,9 +3,7 @@ from collections.abc import Callable
 import jax.numpy as jnp
 from jaxtyping import Array
 
-#
 ## Point wise metrics
-#
 
 
 def abs_error(p_ref: Array, p_pred: Array) -> Array:
@@ -41,10 +39,7 @@ point_wise_metrics: dict[str, Callable[..., Array]] = {
     "diff": diff,
 }
 
-
-#
 ## Global metrics
-#
 
 
 def mse(p_ref: Array, p_pred: Array) -> Array:
