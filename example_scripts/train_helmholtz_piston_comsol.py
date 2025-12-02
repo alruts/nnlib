@@ -13,16 +13,7 @@ from matplotlib import pyplot as plt
 from soap_jax import soap
 from tqdm import tqdm
 
-from pinnlib import feature_maps
-from pinnlib.activations import (
-    LearnableSplitTanh,
-    SplitSinActivation,
-    split_tanh,
-)
-from pinnlib.complex_utils import (
-    split_real_and_imaginary_loss,
-    split_real_and_imaginary_metric,
-)
+import pinnlib as pl
 from pinnlib.data_utils import (
     DataPointGenerator,
     MeshGenerator,
@@ -31,20 +22,7 @@ from pinnlib.data_utils import (
     pc_utils,
 )
 from pinnlib.logger import TensorboardLogger
-from pinnlib.losses import (
-    aggregated_metrics,
-    compute_weighted_loss,
-    compute_weights,
-    data_loss,
-    hom_pde_loss,
-    update_weights,
-)
-from pinnlib.metrics import sq_error
-from pinnlib.misc import (
-    default_complex_dtype,
-    default_wave_speed,
-)
-from pinnlib.pinn import HelmholtzPINN
+from pinnlib.metrics import mse, sq_error  # todo: remove from lib
 
 seed_key = jrandom.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key, bnd_key = jrandom.split(seed_key, 6)
@@ -55,22 +33,22 @@ with open(data_path, "rb") as f:
     data: tuple[PointCloud, PointCloud, dict] = pickle.load(f)
     pressure_pc, velocity_pc, meta_data = data
 
-# ...
+# extract metadata
 frequency = meta_data["frequency"]
 piston_radius = meta_data["piston_radius"]
 piston_velocity = meta_data["normal_velocity"]
-wave_speed = default_wave_speed()
+wave_speed = pl.default_wave_speed()
 
-# Derived acoustic quantities
+# derived acoustic quantities
 angular_frequency = 2 * jnp.pi * frequency
 wavenumber = angular_frequency / wave_speed
 wavelength = 2 * jnp.pi / wavenumber
 
-# Observation grid
+# observation grid
 grid_extent = 0.5 * wavelength + piston_radius
 lower_bound = wavelength * 0.01  # lower bound for homogeneous PDE loss
 
-# data processing pipeline
+# data processing pipeline (point cloud)
 spatial_filter = pc_utils.pipe(
     pc_utils.filter_points(lambda c, _: c[2] <= 0.5 * wavelength),  # upper bound
     pc_utils.filter_points(lambda c, _: c[2] > 1e-3),  # lower bound
@@ -112,7 +90,7 @@ eval_velocity_pc = bottom_filter(velocity_pc)
 
 def boundary_velocity_loss(
     fwd_params: PyTree,
-    fwd_model: HelmholtzPINN,
+    fwd_model: pl.pinn.HelmholtzPINN,
     coords_normals: tuple[Array, Array],
     criterion: Callable,
     inv_params: PyTree,
@@ -134,7 +112,7 @@ def boundary_velocity_loss(
     return criterion(fwd_pred, inv_pred)
 
 
-losses = {"data": data_loss, "pde": hom_pde_loss, "bnd": boundary_velocity_loss}
+losses = {"data": pl.data_loss, "pde": pl.hom_pde_loss, "bnd": boundary_velocity_loss}
 update_weights_every = 1000
 
 # Initialize the weights for adaptive grad norm, these are updated after the first step
@@ -156,7 +134,7 @@ def predict_velocity(params, pinn):
     """Evaluates (0, 0, 1) velocity over the same grid as original dataset"""
     v = jax.vmap(pinn.velocity, [None, 0, 0, None, None, None, None])
     x, y, _ = eval_pressure_pc.coords
-    tangent = (0.0, 0.0, 1.0)
+    tangent = (0.0, 0.0, 1.0)  # +z unit
     return v(params, x, y, 0.0, *tangent)
 
 
@@ -194,12 +172,12 @@ for data_generator in data_generators:
     log_every = 1000
 
     # Random Fourier features for input coordinates helps with low-frequency bias
-    rff = feature_maps.RandomFourierFeatures(
+    rff = pl.feature_maps.RandomFourierFeatures(
         embed_scale=1 / jnp.sqrt(wavelength), embed_dim=64, in_dim=3, key=emb_key
     )
 
     # build PINN
-    pinn = HelmholtzPINN.create(
+    pinn = pl.pinn.HelmholtzPINN.create(
         embedding=rff,
         arch_name="pirate_net",
         frequency=frequency,
@@ -207,10 +185,13 @@ for data_generator in data_generators:
         out_size="scalar",
         width_size=32,
         depth=3,
-        dtype=default_complex_dtype(),
-        # first_activation=SplitSinActivation(float(wavenumber)),
-        activation=split_tanh,
-        final_activation=LearnableSplitTanh(jnp.array(1.0), jnp.array(1.0)),
+        dtype=pl.default_complex_dtype(),
+        activation=pl.split_real_and_imaginary_activation(jax.nn.tanh),  # split tanh
+        final_activation=pl.LearnableSplitTanh(jnp.array(1.0), jnp.array(1.0)),
+        pytree_transformation=pl.filter_tree_map(
+            pl.make_nd_array_filter(n=2),  # 2d arrays (weight matrices)
+            lambda x: x / jnp.sqrt(2),  # complex-valued initialization
+        ),
         key=net_key,
     )
 
@@ -228,13 +209,10 @@ for data_generator in data_generators:
         # velocity is params inside the radius, 0 outside, smooth transition
         return inside_smooth * velocity
 
-    velocity_params = ((0.1 + 1) * jnp.array(piston_velocity),)
+    velocity_params = ((0.5 + 1) * jnp.array(piston_velocity),)  # 50% initial error
 
     # Extract the trainable parameters of the neural-net as a `PyTree`
     pinn_params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
-    pinn_params = jax.tree.map(
-        lambda x: x / jnp.sqrt(2), pinn_params
-    )  # scaling due to complex
 
     # Initialize optimizers
     learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
@@ -244,10 +222,10 @@ for data_generator in data_generators:
 
     learning_rate = optax.join_schedules(
         [
-            optax.schedules.linear_schedule(0.0, 1e-1, 5000),
-            optax.schedules.exponential_decay(1e-1, 10_000, 0.9),
+            optax.schedules.polynomial_schedule(0.0, 1.0, 2, 2000),
+            optax.schedules.constant_schedule(1.0),
         ],
-        boundaries=[5000],
+        boundaries=[2000],
     )
     inv_optimizer = optax.contrib.split_real_and_imaginary(optax.sgd(learning_rate))
 
@@ -263,14 +241,14 @@ for data_generator in data_generators:
         # extra arguments for boundary loss
         extra_args = {"bnd": (inv_params, inv_model)}
         (total, each_term), grads = jax.value_and_grad(
-            compute_weighted_loss, has_aux=True
+            pl.compute_weighted_loss, has_aux=True
         )(
             params,
             model=model,
             batch=batch,
             weights=weights,
             losses=losses,
-            criterion=split_real_and_imaginary_loss(aggregated_metrics["mse"]),
+            criterion=pl.split_real_and_imaginary_loss(mse),
             extra_args=extra_args,
         )
         grads_conj = jax.tree.map(jnp.conj, grads)
@@ -286,7 +264,7 @@ for data_generator in data_generators:
             params,
             model,
             batch["bnd"],
-            split_real_and_imaginary_loss(aggregated_metrics["mse"]),
+            pl.split_real_and_imaginary_loss(mse),
             inv_params,
             inv_model,
         )
@@ -333,10 +311,10 @@ for data_generator in data_generators:
         # Update adaptive weights
         extra_args = {"bnd": (velocity_params, velocity_model)}
         if step % update_weights_every == 0:
-            new_weights = compute_weights(
+            new_weights = pl.compute_weights(
                 pinn_params, pinn, batch, losses, extra_args=extra_args
             )
-            loss_weights = update_weights(0.9, loss_weights, new_weights)
+            loss_weights = pl.update_weights(0.9, loss_weights, new_weights)
 
         if step % log_every == 0:
             logger.log_scalar("loss/total", loss, step)
@@ -371,11 +349,11 @@ for data_generator in data_generators:
             logger.log_plot("plots/v_pred_phase", plot_pred, jnp.angle(v_pred), step)
 
             # compute errors
-            p_pred_error = split_real_and_imaginary_metric(aggregated_metrics["mse"])(
+            p_pred_error = pl.split_real_and_imaginary_metric(mse)(
                 p_pred, eval_pressure_pc.vals
             )
 
-            v_pred_error = split_real_and_imaginary_metric(aggregated_metrics["mse"])(
+            v_pred_error = pl.split_real_and_imaginary_metric(mse)(
                 v_pred, eval_velocity_pc.vals
             )
 
@@ -385,13 +363,13 @@ for data_generator in data_generators:
             logger.log_scalar("errors/v_mse_im", v_pred_error.imag, step)
 
             # compute point-wise metrics
-            p_error = split_real_and_imaginary_metric(sq_error)(
+            p_error = pl.split_real_and_imaginary_metric(sq_error)(
                 p_pred, eval_pressure_pc.vals
             )
             logger.log_plot("errors/p_sq_error_re", plot_pred, jnp.real(p_error), step)
             logger.log_plot("errors/p_sq_error_im", plot_pred, jnp.imag(p_error), step)
 
-            v_error = split_real_and_imaginary_metric(sq_error)(
+            v_error = pl.split_real_and_imaginary_metric(sq_error)(
                 v_pred, eval_velocity_pc.vals
             )
             logger.log_plot("errors/v_sq_error_re", plot_pred, jnp.real(v_error), step)
