@@ -23,6 +23,7 @@ from pinnlib.data_utils import (
 )
 from pinnlib.logger import TensorboardLogger
 from pinnlib.metrics import mse, sq_error  # todo: remove from lib
+from pinnlib.plotting import plot_batch
 
 seed_key = jrandom.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key, bnd_key = jrandom.split(seed_key, 6)
@@ -45,7 +46,7 @@ wavenumber = angular_frequency / wave_speed
 wavelength = 2 * jnp.pi / wavenumber
 
 # observation grid
-grid_extent = 0.5 * wavelength + piston_radius
+grid_extent = 0.25 * wavelength + piston_radius
 lower_bound = wavelength * 0.01  # lower bound for homogeneous PDE loss
 
 # data processing pipeline (point cloud)
@@ -162,6 +163,16 @@ for data_generator in data_generators:
     infinite_data_loader = iter(data_generator)
     infinite_point_loader = iter(domain_generator)
     infinite_disk_loader = iter(mesh_generator)
+
+    # visualize single batch
+    plot_batch(
+        mesh=mesh,
+        pressure_batch=next(infinite_data_loader),
+        domain_batch=next(infinite_point_loader),
+        boundary_batch=next(infinite_disk_loader),
+        bounding_box=domain_generator.bounds,
+        gt_pressure=pressure_pc,
+    )
 
     # Initialize logger
     logger = TensorboardLogger(experiment_name=f"test-run_{len(data_generator)}")
