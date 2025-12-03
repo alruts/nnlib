@@ -254,19 +254,26 @@ class PirateBlock(eqx.Module):
         self.io_size = io_size
         self.width_size = width_size
 
-    def __call__(self, x, u, v):
-        """Forward pass."""
+    def __call__(self, x: Array, u: eqx.nn.Linear, v: eqx.nn.Linear):
+        """Simplified forward pass without filter_vmap."""
         identity = x
 
-        u = self.activation(u(x))
-        v = self.activation(v(x))
+        # First layer
+        u_val = self.activation(u(x))
+        v_val = self.activation(v(x))
+        x = self.activation(self.layers[0](x))
 
-        for layer in self.layers[:-1]:
-            x = layer(x)
-            x = self.activation(x)
-            x = x * u + (1 - x) * v
+        x = x * u_val + (1 - x) * v_val
 
-        x = self.layers[-1](x)  # Last layer
+        # Middle layers
+        for layer in self.layers[1:-1]:
+            x = self.activation(layer(x))
+            x = x * u_val + (1 - x) * v_val
+
+        # Final layer
+        x = self.activation(self.layers[-1](x))
+
+        # Blend with input
         x = self.alpha * x + (1 - self.alpha) * identity
         return x
 
