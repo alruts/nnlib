@@ -29,6 +29,7 @@ from pinnlib.misc import (
     default_wave_speed,
     get_parameters,
 )
+from pinnlib.pinn import HelmholtzPINN, WavePINN
 from pinnlib.reparametrize import (
     filter_tree_map,
     make_is_leaf_of_filter,
@@ -39,6 +40,8 @@ from pinnlib.reparametrize import (
 )
 
 __all__ = [
+    "WavePINN",
+    "HelmholtzPINN",
     "split_real_and_imaginary_activation",
     "split_real_and_imaginary_loss",
     "split_real_and_imaginary_metric",
