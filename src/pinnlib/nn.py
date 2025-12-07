@@ -504,8 +504,8 @@ def make_modified_siren(
     key: PRNGKeyArray,
 ) -> ModifiedMLP:
     """
-    Constructs a modified SIREN (Sinusoidal Representation Network [1]) using Equinox's MLP,
-    with custom sinusoidal initialization for weights.
+    Constructs a modified SIREN (Sinusoidal Representation Network) using with
+    custom initialization.
 
     Example:
         >>> import jax
@@ -516,11 +516,6 @@ def make_modified_siren(
         >>> y = model(x)
         >>> y.shape
         (2,)
-
-    [1] V. Sitzmann, J. N. P. Martel, A. W. Bergman, D. B. Lindell, and G.
-    Wetzstein, "Implicit Neural Representations with Periodic Activation
-    Functions." arXiv, Jun. 17, 2020. Accessed: Mar. 08, 2024. [Online].
-    Available: http://arxiv.org/abs/2006.09661
     """
     mlp_key, fst_w_key, snd_w_key, fst_b_key, snd_b_key = jrandom.split(key, 5)
 

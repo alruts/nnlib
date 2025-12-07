@@ -93,7 +93,7 @@ def plot_batch(
     if gt_pressure is not None:
         # Flatten coordinates and values
         x, y, z = flatten_coords(gt_pressure.coords)
-        p = np.abs(gt_pressure.vals.reshape(-1))  # pressure magnitude
+        p = np.real(gt_pressure.vals.reshape(-1))  # pressure magnitude
 
         plotter.add_points(
             np.stack([x, y, z], axis=-1),
@@ -101,6 +101,7 @@ def plot_batch(
             style="points_gaussian",
             opacity=0.01,
             point_size=10,
+            cmap="jet",
         )
 
     plotter.add_legend()
