@@ -184,30 +184,26 @@ for data_generator in data_generators:
 
     # Random Fourier features for input coordinates helps with low-frequency bias
     rff = pl.feature_maps.RandomFourierFeatures(
-        embed_scale=1 / jnp.sqrt(wavelength), embed_dim=32, in_dim=3, key=emb_key
+        embed_scale=1 / jnp.sqrt(wavelength), embed_dim=64, in_dim=3, key=emb_key
     )
 
     # build PINN
-    a_key, b_key = jrandom.split(net_key, 2)
-    pinn = pl.HelmholtzPINN.create(
+    pinn = pl.pinn.HelmholtzPINN.create(
         embedding=rff,
-        arch_name="siren",
+        arch_name="pirate_net",
         frequency=frequency,
         in_size=3,
         out_size="scalar",
         width_size=32,
         depth=3,
         dtype=pl.default_complex_dtype(),
-        first_activation=pl.SplitSinActivation(wavenumber),  # split tanh
-        activation=pl.SplitSinActivation(30.0),  # split tanh
+        activation=pl.split_real_and_imaginary_activation(jax.nn.tanh),  # split tanh
         final_activation=pl.LearnableSplitTanh(jnp.array(1.0), jnp.array(1.0)),
-        # pytree_transformation=pl.reparam_pytree(
-        #     filter_spec=pl.make_nd_array_filter(2),
-        #     new_distribution=jax.nn.initializers.glorot_uniform(),
-        #     dtype=pl.default_complex_dtype(),
-        #     key=a_key,
-        # ),
-        key=b_key,
+        pytree_transformation=pl.filter_tree_map(
+            pl.make_nd_array_filter(n=2),  # 2d arrays (weight matrices)
+            lambda x: x / jnp.sqrt(2),  # complex-valued initialization
+        ),
+        key=net_key,
     )
 
     # v_n is a circular 'step function'
@@ -224,7 +220,7 @@ for data_generator in data_generators:
         # velocity is params inside the radius, 0 outside, smooth transition
         return inside_smooth * velocity
 
-    velocity_params = (0.0 * jnp.array(piston_velocity),)  # 50% initial error
+    velocity_params = ((0.5 + 1) * jnp.array(piston_velocity),)  # 50% initial error
 
     # Extract the trainable parameters of the neural-net as a `PyTree`
     pinn_params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
@@ -303,7 +299,7 @@ for data_generator in data_generators:
         batch = {"data": data_batch, "pde": pde_batch, "bnd": bnd_batch}
 
         # Do step
-        pinn_params, fwd_opt_state, (l, ls) = fwd_train_step(
+        pinn_params, fwd_opt_state, (loss, individual_losses) = fwd_train_step(
             pinn,
             pinn_params,
             velocity_model,
@@ -314,8 +310,13 @@ for data_generator in data_generators:
         )
 
         # adaptive inverse model
-        velocity_params, inv_opt_state, inv_l = inv_train_step(
-            pinn, pinn_params, velocity_model, velocity_params, inv_opt_state, batch
+        velocity_params, inv_opt_state, inv_loss = inv_train_step(
+            pinn,
+            pinn_params,
+            velocity_model,
+            velocity_params,
+            inv_opt_state,
+            batch,
         )
 
         # Update adaptive weights
@@ -327,8 +328,8 @@ for data_generator in data_generators:
             loss_weights = pl.update_weights(0.9, loss_weights, new_weights)
 
         if step % log_every == 0:
-            logger.log_scalar("loss/total", l, step)
-            logger.log_scalar("inv/loss", inv_l, step)
+            logger.log_scalar("loss/total", loss, step)
+            logger.log_scalar("inv/loss", inv_loss, step)
             (_velocity,) = jax.tree.map(jnp.array, velocity_params)
 
             logger.log_scalar(
@@ -346,8 +347,8 @@ for data_generator in data_generators:
             for term, weight in loss_weights.items():
                 logger.log_scalar(f"weight/{term}", weight, step)
 
-            for term, l in ls.items():
-                logger.log_scalar(f"loss/{term}", l / loss_weights.get(term), step)
+            for term, loss in individual_losses.items():
+                logger.log_scalar(f"loss/{term}", loss / loss_weights.get(term), step)
 
             # make a prediction
             p_pred = predict_pressure(pinn_params, pinn)
