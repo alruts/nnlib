@@ -4,7 +4,7 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jrandom
+import jax.random as jr
 from jaxtyping import Array, Float, PRNGKeyArray
 
 from pinnlib.activations import SinActivation, SplitSinActivation, identity_activation
@@ -120,7 +120,7 @@ class ModifiedMLP(MLPWithFirstActivation):
         *,
         key: PRNGKeyArray,
     ):
-        u_key, v_key, mlp_key = jrandom.split(key, 3)
+        u_key, v_key, mlp_key = jr.split(key, 3)
 
         super().__init__(
             in_size=in_size,
@@ -222,7 +222,7 @@ class PirateBlock(eqx.Module):
         use_bias: bool = True,
         dtype=None,
         *,
-        key=jrandom.PRNGKey(0),
+        key=jr.PRNGKey(0),
     ):
         fst_key, snd_key, thd_key = jax.random.split(key, 3)
 
@@ -431,7 +431,7 @@ def make_siren(
     Functions." arXiv, Jun. 17, 2020. Accessed: Mar. 08, 2024. [Online].
     Available: http://arxiv.org/abs/2006.09661
     """
-    mlp_key, fst_w_key, snd_w_key, fst_b_key, snd_b_key = jrandom.split(key, 5)
+    mlp_key, fst_w_key, snd_w_key, fst_b_key, snd_b_key = jr.split(key, 5)
 
     mlp = MLPWithFirstActivation(
         in_size=in_size,
@@ -517,7 +517,7 @@ def make_modified_siren(
         >>> y.shape
         (2,)
     """
-    mlp_key, fst_w_key, snd_w_key, fst_b_key, snd_b_key = jrandom.split(key, 5)
+    mlp_key, fst_w_key, snd_w_key, fst_b_key, snd_b_key = jr.split(key, 5)
 
     mod_mlp = ModifiedMLP(
         in_size=in_size,

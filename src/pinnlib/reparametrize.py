@@ -4,7 +4,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jrandom
+import jax.random as jr
 from jax.nn import initializers
 from jaxtyping import Array, DTypeLike, PRNGKeyArray, PyTree
 
@@ -39,7 +39,7 @@ def reparametrize_linear(
         True
     """
 
-    wkey, bkey = jrandom.split(key)
+    wkey, bkey = jr.split(key)
 
     new_layer = eqx.tree_at(
         lambda layer: layer.weight,
@@ -101,15 +101,15 @@ def siren_bias_initializer(is_first: bool = False):
         if is_first:
             if jnp.issubdtype(dtype, jnp.complexfloating):
                 # Sample random angle theta uniformly in [0, 2π)
-                theta = jrandom.uniform(
+                theta = jr.uniform(
                     key, shape, dtype=jnp.float32, minval=0.0, maxval=2 * jnp.pi
                 )
-                r = jrandom.uniform(
+                r = jr.uniform(
                     key, shape, dtype=jnp.float32, minval=0.0, maxval=1.0
                 )
                 return r * jnp.exp(1j * theta).astype(dtype)  # unit circle
             else:
-                return jrandom.uniform(key, shape, dtype=dtype, minval=-1.0, maxval=1.0)
+                return jr.uniform(key, shape, dtype=dtype, minval=-1.0, maxval=1.0)
         else:
             return jnp.zeros(shape, dtype)
 
