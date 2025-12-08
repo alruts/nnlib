@@ -80,7 +80,7 @@ def wave_residual(
     p_tt = jnp.array(second_derivs[-1])
     laplacian = jnp.sum(jnp.array(second_derivs[:-1]))
 
-    return laplacian - (1.0 / wave_speed**2) * p_tt - rhs(*args)
+    return laplacian - (1.0 / wave_speed**2) * p_tt
 
 
 def wave_directional_velocity(
@@ -154,8 +154,8 @@ def wave_directional_velocity(
 
 
 def wave_impedance(
-    params: PyTree,
     model: Callable,
+    params: PyTree,
     *args: Scalar,
     wave_speed: float,
     medium_density: float,
@@ -216,7 +216,7 @@ def helmholtz_residual(
         return jnp.array([model(params, *xs).real, model(params, *xs).imag])
 
     x = jnp.array(args)
-    hess_split = jax.hessian(p_split)(jnp.array(args))
+    hess_split = jax.hessian(p_split)(x)
     hessian = hess_split[0] + 1j * hess_split[1]
     laplacian = jnp.trace(hessian)
 
@@ -361,9 +361,10 @@ class WavePINN(eqx.Module):
             medium_density=medium_density,
         )
 
-    def __call__(self, params: PyTree, *args: Float) -> Float:
+    def __call__(self, params: PyTree, *args: Scalar) -> Scalar:
         """Forward computation of pressure"""
         x = jnp.stack(args)
+        x = jnp.asarray(x, dtype=jnp.result_type(x, *jax.tree.leaves(params)))
 
         if self.embedding:
             x = self.embedding(x)
@@ -373,19 +374,17 @@ class WavePINN(eqx.Module):
         return apply_model(self.model, params, x)
 
     def residual(self, params: PyTree, *args: Scalar, rhs=lambda *_: 0.0) -> Scalar:
-        return wave_residual(
-            params, self.model, *args, rhs=rhs, wave_speed=self.wave_speed
-        )
+        return wave_residual(self, params, *args, rhs=rhs, wave_speed=self.wave_speed)
 
     def velocity(self, params: PyTree, *args: Scalar) -> Scalar:
         return wave_directional_velocity(
-            params, self.model, *args, medium_density=self.medium_density
+            self, params, *args, medium_density=self.medium_density
         )
 
     def impedance(self, params: PyTree, *args: Scalar) -> Scalar:
         return wave_impedance(
+            self,
             params,
-            self.model,
             *args,
             wave_speed=self.wave_speed,
             medium_density=self.medium_density,

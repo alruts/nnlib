@@ -1,6 +1,7 @@
 from pinnlib import feature_maps, nn, pinn
 from pinnlib.activations import (
     LearnableSplitTanh,
+    SinActivation,
     SplitSinActivation,
     cardioid,
     identity_activation,
@@ -66,6 +67,7 @@ __all__ = [
     "siren_weight_initializer",
     "LearnableSplitTanh",
     "SplitSinActivation",
+    "SinActivation",
     "cardioid",
     "identity_activation",
     "rotating_cardioid",
