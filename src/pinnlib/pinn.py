@@ -10,7 +10,6 @@ from jaxtyping import Float, PyTree, Scalar
 from pinnlib.feature_maps import PeriodicFeatures, RandomFourierFeatures
 from pinnlib.misc import (
     apply_model,
-    args_to_array,
     default_medium_density,
     default_wave_speed,
 )
@@ -33,7 +32,7 @@ arch_lib = {
 def wave_residual(
     model: Callable,
     params: PyTree,
-    *coords: Scalar,
+    *args: Scalar,
     wave_speed: float,
     rhs: Callable = lambda *_: 0.0,
 ) -> Scalar:
@@ -61,14 +60,14 @@ def wave_residual(
         return model(params, *x)
 
     second_derivs = [
-        jax.grad(lambda *x: jax.grad(p_fn, arg)(*x), arg)(*coords)
-        for arg in range(len(coords))
+        jax.jacrev(lambda *x: jax.jacfwd(p_fn, argnum)(*x), argnum)(*args)
+        for argnum in range(len(args))
     ]
 
     p_tt = jnp.array(second_derivs[-1])
     laplacian = jnp.sum(jnp.array(second_derivs[:-1]))
 
-    return laplacian - (1.0 / wave_speed**2) * p_tt - rhs(*coords)
+    return laplacian - (1.0 / wave_speed**2) * p_tt - rhs(*args)
 
 
 def wave_directional_velocity(
@@ -188,13 +187,17 @@ def helmholtz_residual(
     True
     """
 
-    @args_to_array
-    def p_split(*x):
+    def p_fn(*x):
         return jnp.array([model(params, *x).real, model(params, *x).imag])
 
-    hess_split = jax.hessian(p_split)(jnp.array(args))
-    hessian = hess_split[0] + 1j * hess_split[1]
-    laplacian = jnp.trace(hessian)
+    # Forward-over-reverse AD for laplacian
+    second_derivs = [
+        jax.jacfwd(lambda *x: jax.jacrev(p_fn, argnum)(*x), argnum)(*args)
+        for argnum in range(len(args))
+    ]
+
+    laplacian = jnp.sum(jnp.array(second_derivs), axis=-1)
+    laplacian = laplacian[0] + 1j * laplacian[1]
 
     k = (2 * jnp.pi * frequency) / wave_speed
 
@@ -205,8 +208,8 @@ def helmholtz_directional_velocity(
     model: Callable,
     params: PyTree,
     *args: Scalar,
-    frequency,
-    medium_density,
+    frequency: float,
+    medium_density: float,
 ) -> Scalar:
     """
     Compute directional velocity via Euler's equation of motion.
@@ -264,9 +267,9 @@ def helmholtz_impedance(
     model: Callable,
     params: PyTree,
     *args: Scalar,
-    frequency,
-    wave_speed,
-    medium_density,
+    frequency: float,
+    wave_speed: float,
+    medium_density: float,
 ) -> Scalar:
     """
     Compute directional impedance normalized to the medium.
