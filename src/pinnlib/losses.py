@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from equinox import filter_jit
 from jaxtyping import Array, ArrayLike, PyTree
 
-from pinnlib.data_utils import Coords, PointCloud
+from pinnlib.data import Coords, PointCloud
 from pinnlib.metrics import aggregated_metrics
 from pinnlib.pinn import HelmholtzPINN, WavePINN
 

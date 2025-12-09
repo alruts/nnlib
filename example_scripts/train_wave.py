@@ -12,9 +12,13 @@ from soap_jax import soap
 from tqdm import tqdm
 
 import pinnlib as pl
-from pinnlib import data_utils
-from pinnlib.data_utils import pc_utils as pcu
-from pinnlib.data_utils.point_cloud import GridDiscretisationND
+from pinnlib.data import (
+    DataPointGenerator,
+    GridDiscretisationND,
+    PointCloud,
+    UniformGenerator,
+)
+from pinnlib.data import pc_utils as pcu
 from pinnlib.metrics import mse
 from pinnlib.misc import args_to_array
 
@@ -99,7 +103,7 @@ cycle_len = 4 / random_freqs.max()
 sample_rate = 4 * random_freqs.max()
 
 waves = [
-    data_utils.GridDiscretisationND.discretise_fn(
+    GridDiscretisationND.discretise_fn(
         fn=partial(plane_wave, theta=θ, f=f),
         bounds=[(-0.25, 0.25), (-0.25, 0.25), (0.0, float(cycle_len))],
         n_points=[128, 128, int(cycle_len * sample_rate)],
@@ -112,7 +116,7 @@ gt_field: GridDiscretisationND = sum(waves[1:], start=waves[0])
 gt_field *= 1 / float(jnp.max(gt_field.vals))
 
 # Create point cloud from dataset
-dataset = data_utils.PointCloud(
+dataset = PointCloud(
     tuple(x.flatten() for x in gt_field.coordinate_arrays), gt_field.vals.flatten()
 )
 
@@ -130,13 +134,13 @@ spatial_filter = pcu.pipe(filter_x, filter_y)
 filtered_pc = spatial_filter(dataset)
 
 # Make data generators
-data_generator = data_utils.DataPointGenerator(
+data_generator = DataPointGenerator(
     point_cloud=filtered_pc,
     batch_size=len(filtered_pc.vals) // 8,
     key=next(rng_keys),
 )
 
-domain_generator = data_utils.UniformGenerator(
+domain_generator = UniformGenerator(
     gt_field.bounds,
     batch_size=2048,
     key=next(rng_keys),

@@ -4,7 +4,7 @@ from functools import reduce
 import jax
 from jax import numpy as jnp
 
-from pinnlib.data_utils.point_cloud import PointCloud
+from pinnlib.data.point_cloud import PointCloud
 
 
 def map_coords(fn):

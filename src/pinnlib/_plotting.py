@@ -6,7 +6,7 @@ import pyvista as pv
 import trimesh
 from scipy.interpolate import griddata
 
-from pinnlib.data_utils.point_cloud import PointCloud
+from pinnlib.data.point_cloud import PointCloud
 
 
 def plot_batch(

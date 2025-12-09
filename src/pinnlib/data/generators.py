@@ -8,7 +8,7 @@ from jax import Array, local_device_count, pmap, vmap
 from jax import random as jr
 from jaxtyping import PRNGKeyArray
 
-from pinnlib.data_utils.point_cloud import Coords, PointCloud, Vecs
+from pinnlib.data.point_cloud import Coords, PointCloud, Vecs
 from pinnlib.misc import default_floating_dtype
 
 

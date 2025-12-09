@@ -16,7 +16,7 @@ from tqdm import tqdm
 import pinnlib as pl
 from pinnlib._logger import TensorboardLogger
 from pinnlib._plotting import plot_batch
-from pinnlib.data_utils import (
+from pinnlib.data import (
     DataPointGenerator,
     MeshGenerator,
     PointCloud,
