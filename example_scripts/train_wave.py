@@ -99,7 +99,7 @@ random_angles = jr.uniform(next(rng_keys), (n_waves,), minval=-jnp.pi, maxval=jn
 random_freqs = jr.uniform(next(rng_keys), (n_waves,), minval=500, maxval=4000)
 
 # 4 cycles
-cycle_len = 4 / random_freqs.max()
+cycle_len = 4 / random_freqs.min()
 sample_rate = 4 * random_freqs.max()
 
 waves = [
