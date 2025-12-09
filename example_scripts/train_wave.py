@@ -115,7 +115,7 @@ losses = {"data": pl.data_loss, "pde": pl.hom_pde_loss}
 
 # Initialize the weights for adaptive grad norm, these are updated after the first step
 # and every `update_weights_every` steps after that
-update_weights_every = jnp.inf
+update_weights_every = 1000
 loss_weights = {key: jnp.array(1.0) for key in losses.keys()}
 
 # Build PINN
@@ -125,7 +125,7 @@ pinn = pl.WavePINN.create(
     out_size="scalar",
     width_size=32,
     depth=3,
-    first_activation=pl.SinActivation(30.0),
+    first_activation=pl.SinActivation(10.0),
     activation=pl.SinActivation(30.0),
     final_activation=pl.LearnableTanh(jnp.array(1.0)),
     key=next(keys),
@@ -186,16 +186,7 @@ for step, data_batch, pde_batch in tqdm(
     if step % print_every == 0:
         print(individual_losses)
 
-        # Animate
-        make_pred = lambda *xs: pinn(params, *xs)
-        predicted_field = GridDiscretisationND.discretise_fn(
-            fn=args_to_array(make_pred),
-            bounds=[(-0.25, 0.25), (-0.25, 0.25), (0.0, 0.1)],
-            n_points=[128, 128, 96],
-        )
-        animate(predicted_field, sensor_locs)
-
-# animate
+# Animate
 make_pred = lambda *xs: pinn(params, *xs)
 predicted_field = GridDiscretisationND.discretise_fn(
     fn=args_to_array(make_pred),
