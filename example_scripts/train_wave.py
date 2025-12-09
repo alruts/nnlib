@@ -4,9 +4,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import optax
+from matplotlib import animation
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from soap_jax import soap
 from tqdm import tqdm
 
 import pinnlib as pl
@@ -16,41 +18,67 @@ from pinnlib.data_utils.point_cloud import GridDiscretisationND
 from pinnlib.metrics import mse
 from pinnlib.misc import args_to_array
 
+# Set random seed
+seed = jr.PRNGKey(42)
+rng_keys = iter(jr.split(seed, 7))
 
-def animate(field, sensor_locs):
-    x, y, t = field.coordinate_arrays
+
+def animate_comparison(ground_truth, prediction, sensor_locs):
+    """
+    Animate comparison between ground truth, prediction, and error with a
+    common colorbar.
+    """
+    x, y, t = ground_truth.coordinate_arrays
     x, y, t = map(jnp.unique, (x, y, t))
 
-    # Set up figure
-    fig, ax = plt.subplots()
-    im = ax.imshow(
-        field.vals[:, :, 0],
-        cmap="seismic",
-        origin="lower",
-        extent=(x.min(), x.max(), y.min(), y.max()),
-    )
-    ax.scatter(*sensor_locs.T, c="k")
-    ax.set_title("Acoustic Wave")
-    fig.colorbar(im, ax=ax)
+    # Compute error
+    error_vals = jnp.abs(ground_truth.vals - prediction.vals)
+
+    # Set up figure with 3 subplots
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    titles = ["Ground Truth", "Prediction", "Error"]
+    datasets = [ground_truth.vals, prediction.vals, error_vals]
+
+    # Determine common color limits across all datasets
+    all_data = jnp.concatenate([d.reshape(-1) for d in datasets])
+    vmin, vmax = all_data.min(), all_data.max()
+
+    im_list = []
+
+    for ax, data, title in zip(axes, datasets, titles):
+        im = ax.imshow(
+            data[:, :, 0],
+            cmap="seismic",
+            origin="lower",
+            extent=(x.min(), x.max(), y.min(), y.max()),
+            vmin=vmin,
+            vmax=vmax,  # Use common color limits
+        )
+        ax.scatter(*sensor_locs.T, c="k")
+        ax.set_title(title)
+        im_list.append(im)
+
+    # Add a single colorbar for all subplots
+    divider = make_axes_locatable(axes[2])
+    cax = divider.append_axes("right", size="3%", pad=0.1)
+    cbar = fig.colorbar(im_list[0], cax=cax)
+    cbar.set_label("Pressure (Pa)")
 
     # Update function for animation
     def update(frame):
-        im.set_data(field.vals[:, :, frame])
-        ax.set_title(f"Time step: {t[frame]}")
-        return [im]
+        for im, data in zip(im_list, datasets):
+            im.set_data(data[:, :, frame])
+        for ax, title in zip(axes, titles):
+            ax.set_title(f"{title} - Time: {t[frame] * 1e3:.2f} ms")
+        return im_list
 
     # Create animation
     _ = animation.FuncAnimation(
-        fig, update, frames=field.vals.shape[2], interval=1, blit=False
+        fig, update, frames=ground_truth.vals.shape[2], interval=100, blit=False
     )
+    fig.tight_layout()
 
-    # Show animation
     plt.show()
-
-
-# Set random seed
-seed = jr.PRNGKey(0)
-keys = iter(jr.split(seed, 6))
 
 
 def plane_wave(xs, A=1.0, theta=0.0, f=1000.0, c=pl.default_wave_speed()):
@@ -62,15 +90,21 @@ def plane_wave(xs, A=1.0, theta=0.0, f=1000.0, c=pl.default_wave_speed()):
 
 
 # Discretise the plane wave with random waves
-n_waves = 3
-angles = jr.uniform(next(keys), (n_waves,), minval=-jnp.pi, maxval=jnp.pi)
+n_waves = 12
+random_angles = jr.uniform(next(rng_keys), (n_waves,), minval=-jnp.pi, maxval=jnp.pi)
+random_freqs = jr.uniform(next(rng_keys), (n_waves,), minval=500, maxval=4000)
+
+# 4 cycles
+cycle_len = 4 / random_freqs.max()
+sample_rate = 4 * random_freqs.max()
+
 waves = [
     data_utils.GridDiscretisationND.discretise_fn(
-        fn=partial(plane_wave, theta=θ),
-        bounds=[(-0.25, 0.25), (-0.25, 0.25), (0.0, 0.1)],
-        n_points=[128, 128, 96],
+        fn=partial(plane_wave, theta=θ, f=f),
+        bounds=[(-0.25, 0.25), (-0.25, 0.25), (0.0, float(cycle_len))],
+        n_points=[128, 128, int(cycle_len * sample_rate)],
     )
-    for θ in angles
+    for θ, f in zip(random_angles, random_freqs)
 ]
 
 # Sum and normalize all waves
@@ -82,28 +116,30 @@ dataset = data_utils.PointCloud(
     tuple(x.flatten() for x in gt_field.coordinate_arrays), gt_field.vals.flatten()
 )
 
-# Make random sensor location filter
-n_sensors = 32
+# Make random sensor location filter (keep dense time axis for each (x,y) pair)
+n_sensors = 16
 x, y, _ = dataset.coords
-sensor_locs = jr.choice(next(keys), jnp.stack([x, y], axis=-1), (32,), replace=False)
+sensor_locs = jr.choice(
+    next(rng_keys), jnp.stack([x, y], axis=-1), (n_sensors,), replace=False
+)
 
 filter_x = pcu.filter_points(lambda c, _: jnp.isin(c[0], sensor_locs[:, 0]))
 filter_y = pcu.filter_points(lambda c, _: jnp.isin(c[1], sensor_locs[:, 1]))
 spatial_filter = pcu.pipe(filter_x, filter_y)
 
-filtered_dataset = spatial_filter(dataset)
+filtered_pc = spatial_filter(dataset)
 
-# Make infinite generators for training points
+# Make data generators
 data_generator = data_utils.DataPointGenerator(
-    point_cloud=filtered_dataset,
-    batch_size=len(filtered_dataset.vals) // 10,
-    key=next(keys),
+    point_cloud=filtered_pc,
+    batch_size=len(filtered_pc.vals) // 8,
+    key=next(rng_keys),
 )
 
 domain_generator = data_utils.UniformGenerator(
     gt_field.bounds,
     batch_size=2048,
-    key=next(keys),
+    key=next(rng_keys),
 )
 
 infinite_data_loader = iter(data_generator)
@@ -120,23 +156,24 @@ loss_weights = {key: jnp.array(1.0) for key in losses.keys()}
 
 # Build PINN
 pinn = pl.WavePINN.create(
-    arch_name="siren",
+    arch_name="modified_siren",
     in_size=3,
     out_size="scalar",
-    width_size=32,
+    width_size=64,
     depth=3,
     first_activation=pl.SinActivation(10.0),
     activation=pl.SinActivation(30.0),
     final_activation=pl.LearnableTanh(jnp.array(1.0)),
-    key=next(keys),
+    key=next(rng_keys),
 )
 
 # Extract the trainable parameters of the neural-net as a `PyTree`
 params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
 
 # Initialize optimizers
-learning_rate = optax.schedules.exponential_decay(1e-3, 1000, 0.9)
-optimizer = optax.adam(learning_rate)
+learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
+# optimizer = optax.adam(learning_rate)
+optimizer = soap(learning_rate, precondition_frequency=2)
 opt_state = optimizer.init(params)
 
 
@@ -160,8 +197,8 @@ def train_step(model, params, opt_state, weights, batch):
 
 
 # Training loop: all the optimization work is done here + logging
-total_steps = int(5e3) + 1
-print_every = 1000
+total_steps = int(8e3) + 1
+log_every = 1000
 for step, data_batch, pde_batch in tqdm(
     zip(range(total_steps), infinite_data_loader, infinite_domain_loader),
     total=total_steps,
@@ -183,17 +220,15 @@ for step, data_batch, pde_batch in tqdm(
         new_weights = pl.compute_weights(params, pinn, batch, losses, criterion=mse)
         loss_weights = pl.update_weights(0.9, loss_weights, new_weights)
 
-    if step % print_every == 0:
+    if step % log_every == 0:
         print(individual_losses)
 
-# Animate
+
+# Animate results
 make_pred = lambda *xs: pinn(params, *xs)
 predicted_field = GridDiscretisationND.discretise_fn(
     fn=args_to_array(make_pred),
-    bounds=[(-0.25, 0.25), (-0.25, 0.25), (0.0, 0.1)],
-    n_points=[128, 128, 96],
+    bounds=gt_field.bounds,
+    n_points=gt_field.vals.shape,
 )
-
-# Visualize!
-animate(predicted_field, sensor_locs)
-animate(gt_field, sensor_locs)
+animate_comparison(gt_field, predicted_field, sensor_locs)
