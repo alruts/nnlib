@@ -23,7 +23,8 @@ from pinnlib.data_utils import (
     UniformGenerator,
     pc_utils,
 )
-from pinnlib.metrics import mse, sq_error  # todo: remove from lib
+from pinnlib.metrics import mse, sq_error
+from pinnlib.misc import default_complex_dtype  # todo: remove from lib
 
 seed_key = jr.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key, bnd_key = jr.split(seed_key, 6)
@@ -188,6 +189,7 @@ for data_generator in data_generators:
     )
 
     # build PINN
+    net_key, init_key = jr.split(net_key, 2)
     pinn = pl.pinn.HelmholtzPINN.create(
         embedding=rff,
         arch_name="pirate_net",
@@ -199,10 +201,6 @@ for data_generator in data_generators:
         dtype=pl.default_complex_dtype(),
         activation=pl.split_real_and_imaginary_activation(jax.nn.tanh),  # split tanh
         final_activation=pl.LearnableSplitTanh(jnp.array(1.0), jnp.array(1.0)),
-        pytree_transformation=pl.filter_tree_map(
-            pl.make_nd_array_filter(n=2),  # 2d arrays (weight matrices)
-            lambda x: x / jnp.sqrt(2),  # complex-valued initialization
-        ),
         key=net_key,
     )
 

@@ -7,7 +7,6 @@ import jax.random as jr
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import optax
-from soap_jax import soap
 from tqdm import tqdm
 
 import pinnlib as pl
@@ -15,21 +14,29 @@ from pinnlib import data_utils
 from pinnlib.data_utils import pc_utils as pcu
 from pinnlib.data_utils.point_cloud import GridDiscretisationND
 from pinnlib.metrics import mse
-from pinnlib.misc import args_to_array, default_wave_speed
+from pinnlib.misc import args_to_array
 
 
-# helper to animate
-def animate(field):
+def animate(field, sensor_locs):
+    x, y, t = field.coordinate_arrays
+    x, y, t = map(jnp.unique, (x, y, t))
+
     # Set up figure
     fig, ax = plt.subplots()
-    im = ax.imshow(field.vals[:, :, 0], cmap="seismic", origin="lower")
+    im = ax.imshow(
+        field.vals[:, :, 0],
+        cmap="seismic",
+        origin="lower",
+        extent=(x.min(), x.max(), y.min(), y.max()),
+    )
+    ax.scatter(*sensor_locs.T, c="k")
     ax.set_title("Acoustic Wave")
     fig.colorbar(im, ax=ax)
 
     # Update function for animation
     def update(frame):
         im.set_data(field.vals[:, :, frame])
-        ax.set_title(f"Time step: {frame}")
+        ax.set_title(f"Time step: {t[frame]}")
         return [im]
 
     # Create animation
@@ -41,9 +48,9 @@ def animate(field):
     plt.show()
 
 
-# set random seed
+# Set random seed
 seed = jr.PRNGKey(0)
-keys = iter(jr.split(seed, 13))
+keys = iter(jr.split(seed, 6))
 
 
 def plane_wave(xs, A=1.0, theta=0.0, f=1000.0, c=pl.default_wave_speed()):
@@ -54,7 +61,7 @@ def plane_wave(xs, A=1.0, theta=0.0, f=1000.0, c=pl.default_wave_speed()):
     )
 
 
-# discretise the plane wave with random waves
+# Discretise the plane wave with random waves
 n_waves = 3
 angles = jr.uniform(next(keys), (n_waves,), minval=-jnp.pi, maxval=jnp.pi)
 waves = [
@@ -84,16 +91,18 @@ filter_x = pcu.filter_points(lambda c, _: jnp.isin(c[0], sensor_locs[:, 0]))
 filter_y = pcu.filter_points(lambda c, _: jnp.isin(c[1], sensor_locs[:, 1]))
 spatial_filter = pcu.pipe(filter_x, filter_y)
 
+filtered_dataset = spatial_filter(dataset)
+
 # Make infinite generators for training points
 data_generator = data_utils.DataPointGenerator(
-    point_cloud=spatial_filter(dataset),
-    batch_size=1024,
+    point_cloud=filtered_dataset,
+    batch_size=len(filtered_dataset.vals) // 10,
     key=next(keys),
 )
 
 domain_generator = data_utils.UniformGenerator(
     gt_field.bounds,
-    batch_size=256,
+    batch_size=2048,
     key=next(keys),
 )
 
@@ -109,20 +118,17 @@ losses = {"data": pl.data_loss, "pde": pl.hom_pde_loss}
 update_weights_every = jnp.inf
 loss_weights = {key: jnp.array(1.0) for key in losses.keys()}
 
-
-# build PINN
+# Build PINN
 pinn = pl.WavePINN.create(
-    embedding=None,
     arch_name="siren",
     in_size=3,
     out_size="scalar",
-    first_activation=pl.SinActivation(10.0),
-    activation=pl.SinActivation(30.0),
-    final_activation=lambda x: x,
     width_size=32,
     depth=3,
+    first_activation=pl.SinActivation(30.0),
+    activation=pl.SinActivation(30.0),
+    final_activation=pl.LearnableTanh(jnp.array(1.0)),
     key=next(keys),
-    wave_speed=default_wave_speed(),
 )
 
 # Extract the trainable parameters of the neural-net as a `PyTree`
@@ -130,7 +136,7 @@ params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
 
 # Initialize optimizers
 learning_rate = optax.schedules.exponential_decay(1e-3, 1000, 0.9)
-optimizer = soap(learning_rate, precondition_frequency=2)
+optimizer = optax.adam(learning_rate)
 opt_state = optimizer.init(params)
 
 
@@ -180,19 +186,23 @@ for step, data_batch, pde_batch in tqdm(
     if step % print_every == 0:
         print(individual_losses)
 
-# Finalized model
-final_model = lambda *xs: pinn(params, *xs)
+        # Animate
+        make_pred = lambda *xs: pinn(params, *xs)
+        predicted_field = GridDiscretisationND.discretise_fn(
+            fn=args_to_array(make_pred),
+            bounds=[(-0.25, 0.25), (-0.25, 0.25), (0.0, 0.1)],
+            n_points=[128, 128, 96],
+        )
+        animate(predicted_field, sensor_locs)
 
-# Make prediction
+# animate
+make_pred = lambda *xs: pinn(params, *xs)
 predicted_field = GridDiscretisationND.discretise_fn(
-    fn=args_to_array(final_model),  # fn needs to take in arrays
+    fn=args_to_array(make_pred),
     bounds=[(-0.25, 0.25), (-0.25, 0.25), (0.0, 0.1)],
     n_points=[128, 128, 96],
 )
 
 # Visualize!
-animate(predicted_field)
-animate(gt_field)
-
-
-# todo: add particle velocity visualization
+animate(predicted_field, sensor_locs)
+animate(gt_field, sensor_locs)

@@ -54,19 +54,21 @@ class MLPWithFirstActivation(eqx.nn.MLP):
             dtype=dtype,
             key=key,
         )
-        self.first_activation = first_activation
+
+        # In case `first_activation` is learnt, then make a separate
+        # copy of their weights for every neuron.
+        self.first_activation = eqx.filter_vmap(
+            eqx.filter_vmap(lambda: activation, axis_size=width_size), axis_size=depth
+        )()
 
     def __call__(self, x: Array, *, key: PRNGKeyArray | None = None) -> Array:
-        # First layer
-        x = self.layers[0](x)
-        x = eqx.filter_vmap(lambda a, b: a(b))(self.first_activation, x)
-
-        # Middle layers
-        for layer in self.layers[1:-1]:
+        for i, layer in enumerate(self.layers[:-1]):
+            this_activation = self.first_activation if i == 0 else self.activation
             x = layer(x)
-            x = eqx.filter_vmap(lambda a, b: a(b))(self.activation, x)
-
-        # Final layer
+            layer_activation = jax.tree.map(
+                lambda x: x[i] if eqx.is_array(x) else x, this_activation
+            )
+            x = eqx.filter_vmap(lambda a, b: a(b))(layer_activation, x)
         x = self.layers[-1](x)
         if self.out_size == "scalar":
             x = self.final_activation(x)

@@ -24,7 +24,7 @@ def rotating_cardioid(z: Complex, b: Complex) -> Complex:
 
 
 class LearnableSplitTanh(eqx.Module):
-    """Applies a sine activation scaled by the given angular frequency."""
+    """Applies a split tanh activation with each part scaled by a and b respectively."""
 
     a: Float
     b: Float
@@ -33,10 +33,19 @@ class LearnableSplitTanh(eqx.Module):
         return self.a * jax.nn.tanh(z.real) + 1j * self.b * jax.nn.tanh(z.imag)
 
 
+class LearnableTanh(eqx.Module):
+    """Applies a tanh activation scaled by a."""
+
+    a: Float
+
+    def __call__(self, z: Float) -> Float:
+        return self.a * jax.nn.tanh(z)
+
+
 class SinActivation(eqx.Module):
     """Applies a sine activation scaled by the given angular frequency."""
 
-    angular_frequency: float
+    angular_frequency: float | Float
 
     def __call__(self, x: Float) -> Float:
         return jnp.sin(self.angular_frequency * x)
@@ -46,7 +55,7 @@ class SplitSinActivation(eqx.Module):
     """Applies a sine-based activation to complex inputs using the given
     angular frequency."""
 
-    angular_frequency: float
+    angular_frequency: float | Float
 
     def __call__(self, z: Complex) -> Complex:
         return jnp.sin(self.angular_frequency * z.real) + 1j * jnp.sin(
@@ -54,16 +63,12 @@ class SplitSinActivation(eqx.Module):
         )
 
 
-class LearnableSinActivation(eqx.Module):
-    """Applies a sine-based activation to complex inputs using the given
-    angular frequency."""
+class WaveletActivation(eqx.Module):
+    a: Array
+    b: Array
 
-    angular_frequency: float
-
-    def __call__(self, z: Complex) -> Complex:
-        return jnp.sin(self.angular_frequency * z.real) + 1j * jnp.sin(
-            self.angular_frequency * z.imag
-        )
+    def __call__(self, x):
+        return self.a * jnp.sin(x) + self.b * jnp.cos(x)
 
 
 def identity_activation(x: Array) -> Array:
