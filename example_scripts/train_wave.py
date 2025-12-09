@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 import optax
 from matplotlib import animation
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from soap_jax import soap
 from tqdm import tqdm
 
 import pinnlib as pl
@@ -78,25 +77,25 @@ def animate_comparison(ground_truth, prediction, sensor_locs):
 
     # Create animation
     _ = animation.FuncAnimation(
-        fig, update, frames=ground_truth.vals.shape[2], interval=100, blit=False
+        fig, update, frames=ground_truth.vals.shape[2], blit=False
     )
     fig.tight_layout()
 
     plt.show()
 
 
-def plane_wave(xs, A=1.0, theta=0.0, f=1000.0, c=pl.default_wave_speed()):
-    x, y, t = xs
-    k = 2 * jnp.pi * f / c
-    return A * jnp.cos(
-        k * (x * jnp.cos(theta) + y * jnp.sin(theta)) - 2 * jnp.pi * f * t
-    )
+def plane_wave(coords, A=1.0, theta=0.0, f=1000.0, c=pl.default_wave_speed()):
+    x, y, t = coords
+    ω = 2 * jnp.pi * f
+    k = ω / c
+    return A * jnp.cos(k * (x * jnp.cos(theta) + y * jnp.sin(theta)) - ω * t)
 
 
 # Discretise the plane wave with random waves
-n_waves = 12
+n_waves = 25
 random_angles = jr.uniform(next(rng_keys), (n_waves,), minval=-jnp.pi, maxval=jnp.pi)
-random_freqs = jr.uniform(next(rng_keys), (n_waves,), minval=500, maxval=4000)
+random_freqs = jr.uniform(next(rng_keys), (n_waves,), minval=1000, maxval=2000)
+random_amplitudes = jr.uniform(next(rng_keys), (n_waves,), minval=0.0, maxval=1.0)
 
 # 4 cycles
 cycle_len = 4 / random_freqs.min()
@@ -104,11 +103,11 @@ sample_rate = 4 * random_freqs.max()
 
 waves = [
     GridDiscretisationND.discretise_fn(
-        fn=partial(plane_wave, theta=θ, f=f),
+        fn=partial(plane_wave, theta=θ, f=f, A=A),
         bounds=[(-0.25, 0.25), (-0.25, 0.25), (0.0, float(cycle_len))],
         n_points=[128, 128, int(cycle_len * sample_rate)],
     )
-    for θ, f in zip(random_angles, random_freqs)
+    for θ, f, A in zip(random_angles, random_freqs, random_amplitudes)
 ]
 
 # Sum and normalize all waves
@@ -121,7 +120,7 @@ dataset = PointCloud(
 )
 
 # Make random sensor location filter (keep dense time axis for each (x,y) pair)
-n_sensors = 16
+n_sensors = 32
 x, y, _ = dataset.coords
 sensor_locs = jr.choice(
     next(rng_keys), jnp.stack([x, y], axis=-1), (n_sensors,), replace=False
@@ -136,7 +135,7 @@ filtered_pc = spatial_filter(dataset)
 # Make data generators
 data_generator = DataPointGenerator(
     point_cloud=filtered_pc,
-    batch_size=len(filtered_pc.vals) // 8,
+    batch_size=len(filtered_pc.vals) // 5,
     key=next(rng_keys),
 )
 
@@ -176,8 +175,7 @@ params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
 
 # Initialize optimizers
 learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
-# optimizer = optax.adam(learning_rate)
-optimizer = soap(learning_rate, precondition_frequency=2)
+optimizer = optax.adam(learning_rate, b1=0.95, b2=0.95)
 opt_state = optimizer.init(params)
 
 
@@ -201,7 +199,7 @@ def train_step(model, params, opt_state, weights, batch):
 
 
 # Training loop: all the optimization work is done here + logging
-total_steps = int(8e3) + 1
+total_steps = int(6e3) + 1
 log_every = 1000
 for step, data_batch, pde_batch in tqdm(
     zip(range(total_steps), infinite_data_loader, infinite_domain_loader),
