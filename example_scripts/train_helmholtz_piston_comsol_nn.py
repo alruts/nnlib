@@ -1,8 +1,7 @@
-import pickle
 from collections.abc import Callable
-from pathlib import Path
 
 import equinox as eqx
+import h5py
 import jax
 import optax
 import trimesh
@@ -15,7 +14,6 @@ from tqdm import tqdm
 
 import pinnlib as pl
 from pinnlib._logger import TensorboardLogger
-from pinnlib._plotting import plot_batch
 from pinnlib.data import (
     DataPointGenerator,
     MeshGenerator,
@@ -24,23 +22,32 @@ from pinnlib.data import (
     pc_utils,
 )
 from pinnlib.metrics import mse, sq_error
-from pinnlib.misc import default_complex_dtype
+from pinnlib.misc import apply_model, array_to_args
 
 seed_key = jr.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key, bnd_key, velocity_key = jr.split(
     seed_key, 7
 )
 
-# load data structure from .pkl file
-data_path = Path("./data/baffled_piston.pkl")
-with open(data_path, "rb") as f:
-    data: tuple[PointCloud, PointCloud, dict] = pickle.load(f)
-    pressure_pc, velocity_pc, meta_data = data
+# load data structure from .h5 file
+with h5py.File("./data/baffled_piston_1000.h5", "r") as h5:
+    x = jnp.array(h5["coords/x"])
+    y = jnp.array(h5["coords/y"])
+    z = jnp.array(h5["coords/z"])
+
+    p = jnp.array(h5["fields/pressure"])
+    vz = jnp.array(h5["fields/velocity_z"])
+
+    meta_group = h5["meta"]
+    meta_data = {k: meta_group.attrs[k] for k in meta_group.attrs}
+
+pressure_pc = PointCloud((x, y, z), p)
+velocity_pc = PointCloud((x, y, z), vz)
 
 # extract metadata
-frequency = meta_data["frequency"]
-piston_radius = meta_data["piston_radius"]
-piston_velocity = meta_data["normal_velocity"]
+frequency = float(meta_data["frequency"])
+piston_radius = float(meta_data["piston_radius"])
+piston_velocity = float(meta_data["normal_velocity"])
 wave_speed = pl.default_wave_speed()
 
 # derived acoustic quantities
@@ -54,7 +61,7 @@ lower_bound = wavelength * 0.01  # lower bound for homogeneous PDE loss
 
 # data processing pipeline (point cloud)
 spatial_filter = pc_utils.pipe(
-    pc_utils.filter_points(lambda c, _: c[2] <= 0.5 * wavelength),  # upper bound
+    pc_utils.filter_points(lambda c, _: c[2] <= 0.25 * wavelength),  # upper bound
     pc_utils.filter_points(lambda c, _: c[2] > 1e-3),  # lower bound
 )
 
@@ -66,7 +73,7 @@ data_generators = [
         batch_size=128,
         key=data_key,
     )
-    for n in (32, 64, 128, 1024)
+    for n in (32,)
 ]
 
 domain_generator = UniformGenerator(
@@ -142,6 +149,40 @@ def predict_velocity(params, pinn):
     return v(params, x, y, 0.0, *tangent)
 
 
+r = jnp.linspace(0, 0.2, 100)
+
+
+@eqx.filter_jit
+def predict_radial_velocity(params, model):
+    p_fn = jax.vmap(model, [None, 0])
+    return p_fn(params, r)
+
+
+def plot_radial_velocity(v):
+    """Plot radial velocity and overlay COMSOL values on the +x axis."""
+
+    fig, ax = plt.subplots()
+    ax.plot(r, v, label="Radial velocity")
+
+    # Filter COMSOL/point-cloud values on the positive x-axis
+    r_filter = pc_utils.pipe(
+        pc_utils.filter_points(lambda coord, _: coord[0] >= 0.0),
+        pc_utils.filter_points(lambda coord, _: jnp.abs(coord[1]) < 1e-2),
+        pc_utils.filter_points(lambda coord, _: jnp.abs(coord[2]) < 1e-12),
+    )
+
+    r_pc = r_filter(velocity_pc)
+
+    ax.scatter(r_pc.coords[0], r_pc.vals.real, color="g", label="COMSOL (x-axis)")
+
+    ax.set_xlabel("r")
+    ax.set_ylabel("Velocity")
+    ax.legend()
+    ax.grid(True)
+
+    return fig
+
+
 def plot_pred(pressure):
     fig, ax = plt.subplots()
     x, y, _ = eval_pressure_pc.coords
@@ -166,16 +207,6 @@ for data_generator in data_generators:
     infinite_data_loader = iter(data_generator)
     infinite_point_loader = iter(domain_generator)
     infinite_disk_loader = iter(mesh_generator)
-
-    # visualize single batch
-    plot_batch(
-        mesh=mesh,
-        pressure_batch=next(infinite_data_loader),
-        domain_batch=next(infinite_point_loader),
-        boundary_batch=next(infinite_disk_loader),
-        bounding_box=domain_generator.bounds,
-        gt_pressure=pressure_pc,
-    )
 
     # Initialize logger
     logger = TensorboardLogger(experiment_name=f"test-run_{len(data_generator)}")
@@ -208,16 +239,15 @@ for data_generator in data_generators:
 
     # v_n is a circular 'step function'
     # 1d nn that takes r -> v
-    nn = eqx.nn.MLP(
+    velocity_nn = eqx.nn.MLP(
         in_size=1,
         out_size="scalar",
         width_size=8,
         depth=2,
         activation=jax.nn.relu,
         key=velocity_key,
-        final_activation=pl.LearnableTanh,
+        final_activation=pl.LearnableTanh(1.0),
     )
-    breakpoint()
 
     def velocity_model(params, *x):
         alpha = 200.0
@@ -230,11 +260,11 @@ for data_generator in data_generators:
         inside_smooth = jax.nn.sigmoid(-(r - piston_radius) * alpha)
 
         # velocity is params inside the radius, 0 outside, smooth transition
-        return inside_smooth * pl.apply_model(nn, params, r)
+        return inside_smooth * pl.apply_model(velocity_nn, params, jnp.array([r]))
 
     # Extract the trainable parameters of the neural-net as a `PyTree`
     pinn_params, _ = eqx.partition(pinn.model, filter_spec=eqx.is_array)
-    velocity_params, _ = eqx.partition(nn, filter_spec=eqx.is_array)
+    velocity_params, _ = eqx.partition(velocity_nn, filter_spec=eqx.is_array)
 
     # Initialize optimizers
     learning_rate = optax.schedules.exponential_decay(1e-3, 2000, 0.9)
@@ -242,14 +272,7 @@ for data_generator in data_generators:
         soap(learning_rate, precondition_frequency=2)
     )
 
-    learning_rate = optax.join_schedules(
-        [
-            optax.schedules.polynomial_schedule(0.0, 1.0, 2, 2000),
-            optax.schedules.constant_schedule(1.0),
-        ],
-        boundaries=[2000],
-    )
-    inv_optimizer = optax.contrib.split_real_and_imaginary(optax.sgd(learning_rate))
+    inv_optimizer = optax.adam(1e-2)
 
     # Init state
     fwd_opt_state = fwd_optimizer.init(pinn_params)
@@ -341,19 +364,6 @@ for data_generator in data_generators:
         if step % log_every == 0:
             logger.log_scalar("loss/total", loss, step)
             logger.log_scalar("inv/loss", inv_loss, step)
-            (_velocity,) = jax.tree.map(jnp.array, velocity_params)
-
-            logger.log_scalar(
-                "inv/percent-relative-velocity-error",
-                100 * (jnp.abs(_velocity - piston_velocity) / piston_velocity),
-                step,
-            )
-
-            logger.log_scalar(
-                "inv/v_pred-minus-v_gt",
-                _velocity - piston_velocity,
-                step,
-            )
 
             for term, weight in loss_weights.items():
                 logger.log_scalar(f"weight/{term}", weight, step)
@@ -399,4 +409,5 @@ for data_generator in data_generators:
             logger.log_plot("errors/v_sq_error_im", plot_pred, jnp.imag(v_error), step)
 
             # graph mse + linear values of pred and gt as function of radius
-            ...
+            vmodel_pred = predict_radial_velocity(velocity_params, velocity_model)
+            logger.log_plot("inv/radial_v", plot_radial_velocity, vmodel_pred, step)
