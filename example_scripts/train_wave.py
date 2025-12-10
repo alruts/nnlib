@@ -164,7 +164,7 @@ pinn = pl.WavePINN.create(
     out_size="scalar",
     width_size=64,
     depth=3,
-    first_activation=pl.SinActivation(10.0),
+    first_activation=pl.SinActivation(30.0),
     activation=pl.SinActivation(30.0),
     final_activation=pl.LearnableTanh(jnp.array(1.0)),
     key=next(rng_keys),
@@ -199,7 +199,7 @@ def train_step(model, params, opt_state, weights, batch):
 
 
 # Training loop: all the optimization work is done here + logging
-total_steps = int(6e3) + 1
+total_steps = int(8e3) + 1
 log_every = 1000
 for step, data_batch, pde_batch in tqdm(
     zip(range(total_steps), infinite_data_loader, infinite_domain_loader),
