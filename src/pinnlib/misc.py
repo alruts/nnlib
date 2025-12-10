@@ -1,4 +1,3 @@
-from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax

@@ -58,17 +58,38 @@ class MLPWithFirstActivation(eqx.nn.MLP):
         # In case `first_activation` is learnt, then make a separate
         # copy of their weights for every neuron.
         self.first_activation = eqx.filter_vmap(
-            eqx.filter_vmap(lambda: activation, axis_size=width_size), axis_size=depth
+            lambda: first_activation, axis_size=width_size
         )()
 
+        self.activation = eqx.filter_vmap(
+            eqx.filter_vmap(lambda: activation, axis_size=width_size),
+            axis_size=depth - 1,
+        )()
+
+        if out_size == "scalar":
+            self.final_activation = final_activation
+        else:
+            self.final_activation = eqx.filter_vmap(
+                lambda: final_activation, axis_size=out_size
+            )()
+
     def __call__(self, x: Array, *, key: PRNGKeyArray | None = None) -> Array:
-        for i, layer in enumerate(self.layers[:-1]):
-            this_activation = self.first_activation if i == 0 else self.activation
+        # First layer
+        x = self.layers[0](x)
+        layer_activation = jax.tree.map(
+            lambda x: x if eqx.is_array(x) else x, self.first_activation
+        )
+        x = eqx.filter_vmap(lambda a, b: a(b))(layer_activation, x)
+
+        # Middle layers
+        for i, layer in enumerate(self.layers[1:-1]):
             x = layer(x)
             layer_activation = jax.tree.map(
-                lambda x: x[i] if eqx.is_array(x) else x, this_activation
+                lambda x: x[i] if eqx.is_array(x) else x, self.activation
             )
             x = eqx.filter_vmap(lambda a, b: a(b))(layer_activation, x)
+
+        # Last layer
         x = self.layers[-1](x)
         if self.out_size == "scalar":
             x = self.final_activation(x)
@@ -150,22 +171,33 @@ class ModifiedMLP(MLPWithFirstActivation):
         )
 
     def __call__(self, x: Array, *, key: PRNGKeyArray | None = None) -> Array:
-        """Forward pass with learned modulators u and v, using filter_vmap for activations."""
-
-        # Compute modulators u and v with first_activation
-        u = eqx.filter_vmap(lambda a, b: a(b))(self.first_activation, self.u(x))
-        v = eqx.filter_vmap(lambda a, b: a(b))(self.first_activation, self.v(x))
+        """Forward pass with learned modulators u and v, using filter_vmap for
+        activations."""
 
         # First layer
-        x = eqx.filter_vmap(lambda a, b: a(b))(self.first_activation, self.layers[0](x))
+        u = self.u(x)
+        v = self.v(x)
+        x = self.layers[0](x)
+        layer_activation = jax.tree.map(
+            lambda x: x if eqx.is_array(x) else x, self.first_activation
+        )
+
+        x = eqx.filter_vmap(lambda a, b: a(b))(layer_activation, x)
+        u = eqx.filter_vmap(lambda a, b: a(b))(layer_activation, u)
+        v = eqx.filter_vmap(lambda a, b: a(b))(layer_activation, v)
+
         x = x * u + (1 - x) * v
 
         # Middle layers
-        for layer in self.layers[1:-1]:
-            x = eqx.filter_vmap(lambda a, b: a(b))(self.activation, layer(x))
+        for i, layer in enumerate(self.layers[1:-1]):
+            x = layer(x)
+            layer_activation = jax.tree.map(
+                lambda x: x[i] if eqx.is_array(x) else x, self.activation
+            )
+            x = eqx.filter_vmap(lambda a, b: a(b))(layer_activation, x)
             x = x * u + (1 - x) * v
 
-        # Final layer
+        # Last layer
         x = self.layers[-1](x)
         if self.out_size == "scalar":
             x = self.final_activation(x)

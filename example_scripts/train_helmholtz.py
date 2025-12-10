@@ -29,7 +29,7 @@ seed_key = jr.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key, bnd_key = jr.split(seed_key, 6)
 
 # load data structure from .pkl file
-data_path = Path("./data/baffled_piston.pkl")
+data_path = Path("./data/baffled_piston_1000.pkl")
 with open(data_path, "rb") as f:
     data: tuple[PointCloud, PointCloud, dict] = pickle.load(f)
     pressure_pc, velocity_pc, meta_data = data

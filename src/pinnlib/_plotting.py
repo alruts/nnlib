@@ -4,7 +4,6 @@ import jax.numpy as jnp
 import numpy as np
 import pyvista as pv
 import trimesh
-from scipy.interpolate import griddata
 
 from pinnlib.data.point_cloud import PointCloud
 

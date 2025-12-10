@@ -5,7 +5,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from diffrax import Dopri5, ODETerm, SaveAt, diffeqsolve
-from jaxtyping import Float, PyTree, Scalar
+from jaxtyping import PyTree, Scalar
 
 from pinnlib.feature_maps import PeriodicFeatures, RandomFourierFeatures
 from pinnlib.misc import (

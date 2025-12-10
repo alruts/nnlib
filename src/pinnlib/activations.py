@@ -45,7 +45,7 @@ class LearnableTanh(eqx.Module):
 class SinActivation(eqx.Module):
     """Applies a sine activation scaled by the given angular frequency."""
 
-    angular_frequency: float | Float
+    angular_frequency: Float
 
     def __call__(self, x: Float) -> Float:
         return jnp.sin(self.angular_frequency * x)
@@ -55,7 +55,7 @@ class SplitSinActivation(eqx.Module):
     """Applies a sine-based activation to complex inputs using the given
     angular frequency."""
 
-    angular_frequency: float | Float
+    angular_frequency: Float
 
     def __call__(self, z: Complex) -> Complex:
         return jnp.sin(self.angular_frequency * z.real) + 1j * jnp.sin(

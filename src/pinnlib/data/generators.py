@@ -3,10 +3,12 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import trimesh
 from jax import Array, local_device_count, pmap, vmap
 from jax import random as jr
 from jaxtyping import PRNGKeyArray
+from scipy.stats import qmc
 
 from pinnlib.data.point_cloud import Coords, PointCloud, Vecs
 from pinnlib.misc import default_floating_dtype
@@ -28,6 +30,51 @@ class BaseGenerator:
 
     def gen_data(self, *, key: PRNGKeyArray):
         raise NotImplementedError
+
+
+class SobolGenerator(BaseGenerator):
+    """
+    Sample from a rectangular Uniform distribution using Sobol sequences.
+
+    >>> bounds = [(0, 1), (0, 1)]
+    >>> Generator = SobolGenerator(bounds, 2)
+    >>> x, y = Generator[0]
+    >>> x.shape == (Generator.num_devices, 2)
+    True
+    >>> y.shape == (Generator.num_devices, 2)
+    True
+    >>> all(isinstance(arr, jnp.ndarray) for arr in [x, y])
+    True
+    """
+
+    def __init__(
+        self,
+        bounds: Sequence[tuple[float, float]],
+        batch_size: int,
+        *,
+        key: PRNGKeyArray = jr.PRNGKey(0),  # Kept for API consistency # pyright: ignore
+    ):
+        super().__init__(batch_size, key=key)
+        self.bounds = bounds
+        self.dim = len(bounds)
+
+        # Initialize Sobol engine
+        self.sobol_engine = qmc.Sobol(d=self.dim, scramble=True)
+
+        # Precompute scaling factors for bounds
+        self.lows, self.highs = zip(*bounds)
+        self.lows = np.array(self.lows)
+        self.highs = np.array(self.highs)
+
+    @partial(pmap, static_broadcasted_argnums=(0,))
+    def gen_data(self, *, key: PRNGKeyArray = jr.PRNGKey(0)):  # pyright: ignore
+        # Generate Sobol points in [0,1]^dim
+        sobol_points = self.sobol_engine.random(n=self.batch_size)
+
+        # Scale points to the specified bounds
+        scaled_points = self.lows + sobol_points * (self.highs - self.lows)
+
+        return tuple(jnp.array(scaled_points.T))
 
 
 class UniformGenerator(BaseGenerator):

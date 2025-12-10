@@ -104,9 +104,7 @@ def siren_bias_initializer(is_first: bool = False):
                 theta = jr.uniform(
                     key, shape, dtype=jnp.float32, minval=0.0, maxval=2 * jnp.pi
                 )
-                r = jr.uniform(
-                    key, shape, dtype=jnp.float32, minval=0.0, maxval=1.0
-                )
+                r = jr.uniform(key, shape, dtype=jnp.float32, minval=0.0, maxval=1.0)
                 return r * jnp.exp(1j * theta).astype(dtype)  # unit circle
             else:
                 return jr.uniform(key, shape, dtype=dtype, minval=-1.0, maxval=1.0)

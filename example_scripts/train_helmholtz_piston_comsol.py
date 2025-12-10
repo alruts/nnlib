@@ -24,7 +24,6 @@ from pinnlib.data import (
     pc_utils,
 )
 from pinnlib.metrics import mse, sq_error
-from pinnlib.misc import default_complex_dtype  # todo: remove from lib
 
 seed_key = jr.PRNGKey(0)
 data_key, subsample_key, net_key, emb_key, dom_key, bnd_key = jr.split(seed_key, 6)
@@ -202,6 +201,13 @@ for data_generator in data_generators:
         activation=pl.split_real_and_imaginary_activation(jax.nn.tanh),  # split tanh
         final_activation=pl.LearnableSplitTanh(jnp.array(1.0), jnp.array(1.0)),
         key=net_key,
+        # use glorot_uniform weights due to tanh activations
+        pytree_transformation=pl.reparam_pytree(
+            pl.make_nd_array_filter(2),
+            jax.nn.initializers.glorot_uniform(),
+            dtype=pl.default_complex_dtype(),
+            key=init_key,
+        ),
     )
 
     # v_n is a circular 'step function'
