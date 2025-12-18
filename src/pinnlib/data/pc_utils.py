@@ -74,6 +74,49 @@ def filter_points(predicate):
     return _apply
 
 
+def grid_sample_points(grid_size: tuple[int, ...]):
+    """
+    Sample points from a PointCloud using a uniform grid in arbitrary dimensions.
+
+    Args:
+        grid_size: Tuple defining the number of samples along each axis (e.g., (nx, ny, nz) for 3D).
+
+    Returns:
+        A function that takes a PointCloud and returns a subsampled PointCloud.
+    """
+
+    def _apply(pc):
+        coords = pc.coords  # tuple of arrays, shape (n_points,)
+        dims = len(coords)
+        n_points = len(pc.vals)
+
+        # Compute bounding box for each axis
+        mins = jnp.array([jnp.min(c) for c in coords])
+        maxs = jnp.array([jnp.max(c) for c in coords])
+
+        # Build uniform grid
+        linspaces = [jnp.linspace(mins[i], maxs[i], grid_size[i]) for i in range(dims)]
+        mesh = jnp.meshgrid(*linspaces, indexing="ij")
+        grid_points = jnp.stack(
+            [m.ravel() for m in mesh], axis=-1
+        )  # shape (n_grid_points, dims)
+
+        # Stack coords for distance computation
+        pc_points = jnp.stack(coords, axis=-1)  # shape (n_points, dims)
+
+        # For each grid point, find the nearest point in the point cloud
+        def nearest_idx(pt):
+            dists = jnp.sum((pc_points - pt) ** 2, axis=-1)
+            return jnp.argmin(dists)
+
+        idxs = jax.vmap(nearest_idx)(grid_points)
+        idxs = jnp.unique(idxs)  # remove duplicates
+
+        return PointCloud(coords=tuple(c[idxs] for c in coords), vals=pc.vals[idxs])
+
+    return _apply
+
+
 def sample_points(key, n_samples):
     """
     Randomly sample n_samples points from a PointCloud.
