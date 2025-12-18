@@ -6,6 +6,14 @@ from jaxtyping import Array
 ## Point wise metrics
 
 
+def psnr(p_ref: Array, p_pred: Array) -> Array:
+    """Compute Peak Signal-to-Noise Ratio (PSNR) between reference and
+    predicted values."""
+    mse = jnp.mean((p_ref - p_pred) ** 2)
+    max_val = jnp.max(p_ref)
+    return 20 * jnp.log10(max_val) - 10 * jnp.log10(mse)
+
+
 def abs_error(p_ref: Array, p_pred: Array) -> Array:
     """Compute absolute error between reference and predicted values."""
     return jnp.abs(p_pred - p_ref)
