@@ -191,7 +191,7 @@ for data_generator in data_generators:
     net_key, init_key = jr.split(net_key, 2)
     pinn = pl.pinn.HelmholtzPINN.create(
         embedding=rff,
-        arch_name="pirate_net",
+        arch_name="modified_mlp",
         frequency=frequency,
         in_size=3,
         out_size="scalar",
