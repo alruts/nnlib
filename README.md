@@ -1,246 +1,150 @@
 # pinnlib
 
-A JAX-based library of neural network architectures for physics-informed
-acoustic applications.
-
-## Overview
-
-pinnlib provides a comprehensive suite of neural network architectures and
-utilities specifically designed for solving acoustic wave equations using
-Physics-Informed Neural Networks (PINNs). Built on top of JAX and Equinox, it
-offers high-performance, differentiable implementations for both time-domain
-and frequency-domain acoustic problems.
-
-## Features
-
-- **Neural Network Architectures**: Modified MLP, SIREN, PirateNet, and custom architectures
-- **Physics-Informed Components**: Wave equation and Helmholtz equation solvers
-- **Complex Number Support**: Full support for complex-valued neural networks
-- **Custom Activations**: Specialized activation functions for acoustic applications
-- **Loss Functions**: Comprehensive suite of PDE and data loss functions
-- **Metrics**: Point-wise and aggregated error metrics
-- **Feature Maps**: Periodic and random Fourier feature embeddings
+A library of neural network architectures for acoustics-informed applications, built on JAX and Equinox.
 
 ## Installation
 
-### Prerequisites
-
-- Python 3.13+
-- JAX with appropriate backend (CPU/GPU/TPU)
-
-### Install from source
-
 ```bash
-git clone <repository-url>
-cd pinnlib
 uv sync
 ```
 
-### Dependencies
+**Dependencies:** JAX, Equinox, Optax, Diffrax, PyVista, TensorFlow (logging), and more — see `pyproject.toml`.
 
-pinnlib relies on several key libraries:
-- **JAX**: Automatic differentiation and XLA compilation
-- **Equinox**: Neural network library compatible with JAX
-- **Diffrax**: Differential equation solvers
-- **Optax**: Optimization library
+---
 
-## Quick Start
+## Features
 
-### Basic Wave Equation PINN
+### Core PINN Classes
 
-```python
-import jax
-import jax.numpy as jnp
-from pinnlib import WavePINN, ModifiedMLP
+**`WavePINN`** — time-domain acoustic wave equation PINN
+- `create()` — construct with configurable architecture
+- `__call__()` — forward pressure prediction
+- `residual()` — wave equation PDE residual
+- `velocity()` — directional particle velocity
+- `impedance()` — normalized acoustic impedance
 
-# Create a simple wave PINN
-key = jax.random.PRNGKey(0)
-pinn = WavePINN.create(
-    arch_name="modified_mlp",
-    in_size=3,  # x, y, t
-    out_size=1,  # pressure
-    width_size=32,
-    depth=4,
-    key=key
-)
+**`HelmholtzPINN`** — frequency-domain Helmholtz equation PINN
+- `create()`, `__call__()`, `residual()`, `velocity()`, `impedance()` — same interface as `WavePINN`
 
-# Get model parameters
-params = pinn.get_parameters()
+**Standalone PDE functions:**
+- `wave_residual()`, `wave_directional_velocity()`, `wave_impedance()`
+- `helmholtz_residual()`, `helmholtz_directional_velocity()`, `helmholtz_impedance()`
 
-# Evaluate at a point
-x, y, t = 1.0, 2.0, 0.5
-pressure = pinn(params, x, y, t)
-residual = pinn.residual(params, x, y, t)
-```
+---
 
-### Helmholtz Equation PINN
+### Neural Network Architectures
 
-```python
-from pinnlib import HelmholtzPINN
+- `MLPWithFirstActivation` — MLP with a separate first-layer activation
+- `ModifiedMLP` — MLP with learned linear modulators
+- `PirateBlock` / `PirateNet` — physics-informed residual adaptive network
+- `make_siren()` — SIREN (Sinusoidal Representation Network)
+- `make_modified_siren()` — SIREN with custom initialization
 
-# Create a Helmholtz PINN for frequency domain
-frequency = 1000.0  # Hz
-pinn = HelmholtzPINN.create(
-    arch_name="siren",
-    in_size=2,  # x, y
-    out_size=1,  # complex pressure
-    width_size=64,
-    depth=6,
-    frequency=frequency,
-    key=key
-)
+---
 
-# Evaluate complex pressure
-x, y = 0.5, 0.3
-pressure = pinn(params, x, y)  # Complex-valued
-residual = pinn.residual(params, x, y)
-```
+### Activation Functions
 
-## Architecture Reference
+- `SinActivation` — sine scaled by angular frequency
+- `SplitSinActivation` — sine for complex inputs (applied to real/imag separately)
+- `LearnableSplitTanh` — split tanh with learnable scale for complex inputs
+- `LearnableTanh` — tanh with learnable scale
+- `WaveletActivation` — sine + cosine wavelet activation
+- `split_tanh()`, `cardioid()`, `rotating_cardioid()`, `identity_activation()`
 
-### Available Architectures
+---
 
-| Architecture | Description | Use Case |
-|--------------|-------------|----------|
-| `modified_mlp` | MLP with learned modulators | General PINN applications |
-| `mlp` | Standard MLP | Baseline comparisons |
-| `siren` | Sinusoidal representation network | High-frequency details |
-| `modified_siren` | SIREN with modulators | Complex acoustic fields |
-| `pirate_net` | Adaptive residual network | Challenging PDE problems |
+### Loss Functions
 
-### Custom Activations
+- `data_loss()` — predicted vs. observed pressure
+- `hom_pde_loss()` — homogeneous PDE residual loss
+- `compute_loss()` — total loss with per-term breakdown
+- `compute_weighted_loss()` — loss with per-term weights
+- `compute_weights()` — gradient-norm-based adaptive weighting
+- `update_weights()` — running average weight update with momentum
+- `compute_mask()` — exponential mask for loss weighting
 
-```python
-from pinnlib.activations import (
-    split_tanh, cardioid, rotating_cardioid,
-    SinActivation, SplitSinActivation
-)
+---
 
-# Use custom activation in architecture
-pinn = WavePINN.create(
-    arch_name="modified_mlp",
-    activation=split_tanh,  # Complex tanh
-    key=key
-)
-```
+### Metrics
 
-## Loss Functions and Training
+Point-wise: `psnr()`, `abs_error()`, `sq_error()`, `relative()`, `log_error()`, `diff()`
 
-### Computing Losses
+Global: `mse()`, `rmse()`, `mae()`, `nrmse_range()`, `nrmse_std()`, `mean_rel_error()`, `mag_phase()`
 
-```python
-from pinnlib.losses import compute_loss, data_loss, hom_pde_loss
-from pinnlib.metrics import aggregated_metrics
+---
 
-# Prepare data batch
-batch = {
-    "data": (coords, pressure_values),
-    "pde": pde_coords
-}
+### Complex Number Utilities
 
-# Compute total loss
-total_loss, loss_dict = compute_loss(
-    params, pinn, batch,
-    losses={"pde": hom_pde_loss, "data": data_loss},
-    criterion=aggregated_metrics["mse"]
-)
-```
+- `split_real_and_imaginary_activation()` — extend real activations to complex inputs
+- `split_real_and_imaginary_metric()` — extend real metrics to complex inputs
+- `split_real_and_imaginary_loss()` — extend real losses to complex inputs
 
-### Weighted Loss Training
+---
 
-```python
-from pinnlib.losses import compute_weighted_loss, compute_weights
+### Feature Maps / Input Embeddings
 
-# Compute gradient-norm-based weights
-weights = compute_weights(params, pinn, batch, losses)
+- `Identity` — no transformation
+- `PeriodicFeatures` — cos/sin embeddings with per-axis trainable periods
+- `RandomFourierFeatures` — random Gaussian Fourier embeddings
 
-# Use weighted loss
-total_loss, loss_dict = compute_weighted_loss(
-    params, pinn, weights, batch, losses, criterion
-)
-```
+---
 
-## Advanced Features
+### Re-parameterization
 
-### Feature Embeddings
+- `reparametrize_linear()` — re-parameterize Linear layer weights/biases
+- `siren_weight_initializer()` / `siren_bias_initializer()` — SIREN-specific initialization
+- `reparam_pytree()` — re-parameterize any model with a new distribution
+- `filter_tree_map()` — apply a transformation to selected model parameters
+- `make_nd_array_filter()`, `make_is_leaf_of_filter()`
 
-```python
-from pinnlib.feature_maps import PeriodicFeatures, RandomFourierFeatures
+---
 
-# Add periodic features
-embedding = PeriodicFeatures(sigma=1.0, L=5)
-pinn = WavePINN.create(
-    arch_name="modified_mlp",
-    embedding=embedding,
-    key=key
-)
-```
+### Data Structures
 
-### Complex Number Support
+- `PointCloud` — NamedTuple of coordinate arrays and values
+- `GridDiscretisationND` — N-dimensional regular grid with `discretise_fn()`, `coordinate_arrays`, `as_point_cloud()`, and element-wise operators (`+`, `-`, `*`)
 
-```python
-from pinnlib.complex_utils import split_real_and_imaginary_activation
+Type aliases: `Coords`, `Coord`, `Vecs`, `Vec`, `CoordsVecs`, `Vals`
 
-# Apply activation to real and imaginary parts separately
-activation = split_real_and_imaginary_activation(jax.nn.tanh)
-```
+---
 
-## API Reference
+### Data Generators
 
-### Core Classes
+- `SobolGenerator` — low-discrepancy Sobol sequence sampling
+- `UniformGenerator` — uniform rectangular domain sampling
+- `MeshGenerator` — surface sampling via barycentric coordinates
+- `DataPointGenerator` — random batch sampling from a `PointCloud`
 
-- `WavePINN`: Physics-informed neural network for wave equation
-- `HelmholtzPINN`: Physics-informed neural network for Helmholtz equation
+---
 
-### Neural Networks
+### Point Cloud Utilities
 
-- `ModifiedMLP`: MLP with learned modulators
-- `PirateNet`: Adaptive residual network
-- `make_siren()`: Factory function for SIREN networks
-- `make_modified_siren()`: Factory function for modified SIREN
+- `map_coords()`, `map_vals()` — apply functions to coordinates or values
+- `filter_points()` — filter points by predicate
+- `grid_sample_points()` — subsample using a uniform grid
+- `sample_points()` — random n-point sampling
+- `pipe()` — compose multiple transforms
+- `get_bounding_box()`, `discretise_fn()`
+
+---
 
 ### Utilities
 
-- `apply_model()`: Apply model with parameters
-- `get_parameters()`: Extract trainable parameters
-- `args_to_array()`: Convert function arguments to array
+- `default_floating_dtype()`, `default_complex_dtype()` — JAX dtype helpers
+- `default_wave_speed()` — 343.2 m/s
+- `default_medium_density()` — 1.2043 kg/m³
+- `apply_model()` — enables gradient computation through model weights
+- `get_parameters()`, `args_to_array()`, `array_to_args()`
 
-## Examples
+---
 
-See the `example_scripts/` directory for complete examples:
-- `esm_demo.py`: Basic PINN demonstration
-- `train_helmholtz_piston_comsol.py`: Training with COMSOL data
-- `mesh.py`: Mesh processing utilities
+### Visualization
 
-## Testing
+- `plot_batch()` — PyVista 3D plot of mesh, point batches, and optional ground-truth volume
 
-Run the test suite:
+---
 
-```bash
-pytest tests/
-```
+### Logging
 
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
-
-## License
-
-[Add license information here]
-
-## Citation
-
-If you use pinnlib in your research, please cite:
-
-```bibtex
-@software{pinnlib,
-  title={pinnlib: A JAX-based library for physics-informed acoustic neural networks},
-  author={Sturla Njardarson},
-  year={2024},
-  url={https://github.com/username/pinnlib}
-}
-```
+**`TensorboardLogger`** — TensorBoard integration for JAX experiments
+- `log_scalar()`, `log_scalars()`, `log_histogram()`, `log_plot()`, `log_text()`, `log_hparams()`, `flush()`, `close()`
