@@ -56,7 +56,7 @@ r = pinn.residual(params, x, y)
 
 ### `WavePINN` — Time Domain
 
-Solves the acoustic wave equation: `∇²p − (1/c²) p_tt = 0`
+Solves the acoustic wave equation: `∇²p − (1/c²) p_tt = rhs(x, t)` (defaults to homogeneous, rhs = 0)
 
 ```python
 pinn = pl.WavePINN.create(
@@ -81,7 +81,7 @@ z = pinn.impedance(params, x, y, t, nx, ny)  # normalized acoustic impedance
 
 ### `HelmholtzPINN` — Frequency Domain
 
-Solves the Helmholtz equation: `∇²p + k²p = 0`, where `k = 2πf/c`
+Solves the Helmholtz equation: `∇²p + k²p = rhs(x, y, ...)` where `k = 2πf/c` (defaults to homogeneous, rhs = 0)
 
 ```python
 pinn = pl.HelmholtzPINN.create(
@@ -186,11 +186,37 @@ loss = pl.data_loss(params, model, pressure_pc, criterion=mse)
 ```
 
 ### `hom_pde_loss`
-Enforces the homogeneous PDE residual at collocation points.
+Enforces the homogeneous PDE residual (rhs = 0) at collocation points.
 
 ```python
 # coords is a tuple of coordinate arrays (from a domain generator)
 loss = pl.hom_pde_loss(params, model, coords, criterion=mse)
+```
+
+For inhomogeneous PDEs (e.g. a point source), call `model.residual` directly with a custom `rhs`:
+
+```python
+def source(x, y):
+    """Point source at origin."""
+    r = jnp.sqrt(x**2 + y**2) + 1e-6
+    return jnp.exp(-r**2 / 0.01)
+
+# rhs is passed as a keyword argument to model.residual
+residual = pinn.residual(params, x, y, rhs=source)
+```
+
+You can wire this into the training loop via `extra_args`:
+
+```python
+def inhom_pde_loss(params, model, coords, criterion, rhs_fn):
+    batched = jax.vmap(lambda *xs: model.residual(params, *xs, rhs=rhs_fn))
+    pred = batched(*coords)
+    return criterion(pred, 0.0)
+
+losses = {"data": pl.data_loss, "pde": inhom_pde_loss}
+extra_args = {"pde": (source,)}  # extra positional args forwarded to the loss fn
+
+total, per_term = pl.compute_loss(params, model, batch, losses, criterion=mse, extra_args=extra_args)
 ```
 
 ### `compute_loss` / `compute_weighted_loss`
