@@ -480,3 +480,136 @@ plot_batch(
     ground_truth=gt_field,   # optional volumetric reference
 )
 ```
+
+---
+
+## Example: Inverse Source Identification
+
+This example identifies an unknown surface velocity on a baffled piston from sparse pressure measurements. Two models are trained jointly:
+
+- **Forward PINN** — reconstructs the pressure field in the domain
+- **Inverse model** — learns the unknown source boundary condition
+
+The boundary loss couples them: the PINN's predicted normal velocity on the source surface must match the inverse model's output.
+
+```python
+import jax
+import jax.numpy as jnp
+import jax.random as jr
+import equinox as eqx
+import optax
+import pinnlib as pl
+from pinnlib.data import DataPointGenerator, MeshGenerator, UniformGenerator
+from pinnlib.metrics import mse
+
+key = jr.PRNGKey(0)
+pinn_key, dom_key, data_key, bnd_key = jr.split(key, 4)
+
+frequency = 1000.0
+piston_radius = 0.05   # metres
+wave_speed = pl.default_wave_speed()
+wavelength = wave_speed / frequency
+
+# --- Forward PINN ---
+pinn = pl.HelmholtzPINN.create(
+    arch_name="modified_siren",
+    embedding=None,
+    frequency=frequency,
+    in_size=3,
+    out_size="scalar",
+    width_size=48,
+    depth=3,
+    dtype=pl.default_complex_dtype(),
+    first_activation=pl.SplitSinActivation(30.0),
+    activation=pl.SplitSinActivation(30.0),
+    final_activation=pl.identity_activation,
+    key=pinn_key,
+)
+pinn_params, _ = eqx.partition(pinn.model, eqx.is_array)
+
+# --- Inverse model ---
+# Parameterize the unknown piston velocity as a single learnable scalar.
+# A sigmoid envelope enforces zero velocity outside the piston radius.
+inv_params = (jnp.array(0.5 + 0j),)   # initial guess (50% off from true value)
+
+def velocity_model(params, *xyz):
+    (v,) = params
+    r = jnp.linalg.norm(jnp.array(xyz[:2]))
+    inside = jax.nn.sigmoid(-(r - piston_radius) * 200.0)
+    return inside * v
+
+# --- Loss functions ---
+def boundary_velocity_loss(fwd_params, fwd_model, coords_normals, criterion, inv_params, inv_model):
+    pts, tangents = coords_normals
+    n_dim = len(pts)
+    in_axes = (None, *[0] * n_dim * 2)
+
+    fwd_pred = jax.pmap(jax.vmap(fwd_model.velocity, in_axes=in_axes), in_axes=in_axes)(
+        fwd_params, *pts, *tangents
+    )
+    inv_pred = jax.pmap(jax.vmap(inv_model, in_axes=in_axes), in_axes=in_axes)(
+        inv_params, *pts, *tangents
+    )
+    return criterion(fwd_pred, inv_pred)
+
+losses = {"data": pl.data_loss, "pde": pl.hom_pde_loss, "bnd": boundary_velocity_loss}
+loss_weights = {k: jnp.array(1.0) for k in losses}
+
+# --- Data generators ---
+data_gen = DataPointGenerator(point_cloud=sensor_pressure_pc, batch_size=32, key=data_key)
+domain_gen = UniformGenerator(
+    [(-0.1, 0.1), (-0.1, 0.1), (1e-3, 0.5 * wavelength)], batch_size=128, key=dom_key
+)
+mesh_gen = MeshGenerator(baffle_mesh, batch_size=32, key=bnd_key)
+
+# --- Optimizers ---
+fwd_optimizer = optax.contrib.split_real_and_imaginary(
+    optax.adam(optax.schedules.exponential_decay(1e-3, 2000, 0.9))
+)
+inv_optimizer = optax.contrib.split_real_and_imaginary(optax.sgd(1e-2))
+
+fwd_state = fwd_optimizer.init(pinn_params)
+inv_state = inv_optimizer.init(inv_params)
+
+criterion = pl.split_real_and_imaginary_loss(mse)
+
+# --- Train steps ---
+@eqx.filter_jit
+def fwd_step(model, fwd_params, inv_params, fwd_state, weights, batch):
+    extra_args = {"bnd": (inv_params, velocity_model)}
+    (total, per_term), grads = jax.value_and_grad(pl.compute_weighted_loss, has_aux=True)(
+        fwd_params, model=model, batch=batch, weights=weights,
+        losses=losses, criterion=criterion, extra_args=extra_args,
+    )
+    grads = jax.tree.map(jnp.conj, grads)
+    updates, fwd_state = fwd_optimizer.update(grads, fwd_state, fwd_params)
+    return optax.apply_updates(fwd_params, updates), fwd_state, (total, per_term)
+
+@eqx.filter_jit
+def inv_step(model, fwd_params, inv_params, inv_state, batch):
+    loss, grads = jax.value_and_grad(boundary_velocity_loss, argnums=4)(
+        fwd_params, model, batch["bnd"], criterion, inv_params, velocity_model
+    )
+    grads = jax.tree.map(jnp.conj, grads)
+    updates, inv_state = inv_optimizer.update(grads, inv_state, inv_params)
+    return optax.apply_updates(inv_params, updates), inv_state, loss
+
+# --- Training loop ---
+for step, data_batch, pde_batch, bnd_batch in zip(
+    range(10_000), iter(data_gen), iter(domain_gen), iter(mesh_gen)
+):
+    batch = {"data": data_batch, "pde": pde_batch, "bnd": bnd_batch}
+
+    pinn_params, fwd_state, (loss, _) = fwd_step(pinn, pinn_params, inv_params, fwd_state, loss_weights, batch)
+    inv_params, inv_state, inv_loss  = inv_step(pinn, pinn_params, inv_params, inv_state, batch)
+
+    if step % 1000 == 0:
+        (v_est,) = inv_params
+        print(f"step {step}: fwd loss={loss:.4f}  estimated velocity={v_est:.4f}")
+```
+
+The key ideas:
+- **Two separate optimizers** — the forward PINN and the inverse parameters are updated independently each step.
+- **`extra_args`** — passes the current inverse parameters and model into the boundary loss via `compute_weighted_loss`.
+- **`boundary_velocity_loss`** — computes the PINN's predicted normal velocity on the boundary and penalizes disagreement with the inverse model's output. Backpropagating through this w.r.t. `inv_params` is what drives source identification.
+- The inverse model can be anything: a single scalar (as above), a small MLP parameterized by radius, or a full spatial field.
