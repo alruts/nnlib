@@ -49,21 +49,15 @@ p = pinn(params, x, y)
 # Evaluate PDE residual at a point
 r = pinn.residual(params, x, y)
 
-# Data loss: vmap the model over a batch of sensor measurements
-# sensor_coords = (x_array, y_array), sensor_vals = complex pressure array
-pred = jax.vmap(pinn, in_axes=(None, 0, 0))(params, *sensor_coords)
-data_loss = mse(pred, sensor_vals)
+# Data loss at a single sensor point
+data_loss = jnp.abs(pinn(params, x, y) - p_measured) ** 2
 
-# PDE loss: vmap the residual over a batch of collocation points
-# colloc_coords = (x_array, y_array) sampled from the domain
-residuals = jax.vmap(pinn.residual, in_axes=(None, 0, 0))(params, *colloc_coords)
-pde_loss = mse(residuals, 0.0)
+# PDE residual loss at a single collocation point
+pde_loss = jnp.abs(pinn.residual(params, x, y)) ** 2
 
-# Boundary condition loss: vmap velocity over boundary points and match to known values
-# bnd_coords = (x_array, y_array), bnd_normals = (nx_array, ny_array)
-# bnd_vals = known normal velocity at the boundary (e.g. from a source model)
-pred_velocity = jax.vmap(pinn.velocity, in_axes=(None, 0, 0, 0, 0))(params, *bnd_coords, *bnd_normals)
-bnd_loss = mse(pred_velocity, bnd_vals)
+# Boundary condition loss at a single boundary point
+# nx, ny are the outward normal components at the boundary
+bnd_loss = jnp.abs(pinn.velocity(params, x, y, nx, ny) - v_measured) ** 2
 
 total_loss = data_loss + pde_loss + bnd_loss
 ```
