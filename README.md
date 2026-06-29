@@ -2,7 +2,7 @@
 
 A library of neural network architectures for acoustics-informed applications, built on [JAX](https://github.com/google/jax) and [Equinox](https://github.com/patrick-kidger/equinox).
 
-pinnlib implements Physics-Informed Neural Networks (PINNs) for solving acoustic PDEs — both the time-domain wave equation and the frequency-domain Helmholtz equation. It provides everything needed to go from problem setup to trained model: network architectures, PDE residuals, loss functions, adaptive weighting, data generators, and utilities for complex-valued fields.
+pinnlib implements Physics-Informed Neural Networks (PINNs) for solving acoustic PDEs — both the time-domain wave equation and the frequency-domain Helmholtz equation. It provides everything needed to go from problem setup to trained model: network architectures, PDE residuals, loss functions, adaptive weighting, data generators, and utilities for complex-valued fields. Time-domain particle velocity is computed by integrating Euler's equation forward in time using [Diffrax](https://github.com/patrick-kidger/diffrax).
 
 ## Installation
 
